@@ -28,6 +28,7 @@ import {
   BarChart3,
   Flame,
   Snowflake,
+  FileJson,
 } from 'lucide-react';
 import {
   BatteryProfile,
@@ -92,6 +93,9 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   const [showMonthlyMean, setShowMonthlyMean] = useState<boolean>(true);
   const [showMonthlyBatteryOffset, setShowMonthlyBatteryOffset] = useState<boolean>(true);
   const [hoveredMonthIndex, setHoveredMonthIndex] = useState<number | null>(null);
+
+  // LLM JSON Export Status
+  const [hasExportedJson, setHasExportedJson] = useState<boolean>(false);
 
   const {
     profile,
@@ -328,6 +332,102 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Export complete analysis structured for LLM analysis & reporting (.json)
+  const handleExportLlmJson = () => {
+    // 1. Calculate discounted payback period (where cumulative discounted cash flow crosses $0)
+    let discountedPaybackPeriodYears: number | null = null;
+    if (projections && projections.length > 0) {
+      for (let i = 0; i < projections.length; i++) {
+        const p = projections[i];
+        if (p.cumulativeNpv >= 0) {
+          if (i === 0) {
+            discountedPaybackPeriodYears = 1.0;
+          } else {
+            const prev = projections[i - 1];
+            const denom = p.cumulativeNpv - prev.cumulativeNpv;
+            const fraction = denom !== 0 ? (0 - prev.cumulativeNpv) / denom : 0;
+            discountedPaybackPeriodYears = Math.round((prev.year + fraction) * 100) / 100;
+          }
+          break;
+        }
+      }
+    }
+
+    // 2. Format annual time series up to active projection horizon
+    const annualTimeSeries = (projections || []).slice(0, projectionHorizon).map((p) => ({
+      year: p.year,
+      baseline_electricity_spend_usd: Math.round(p.baselineCost * 100) / 100,
+      with_battery_electricity_spend_usd: Math.round(p.withBatteryCost * 100) / 100,
+      annual_net_savings_usd: Math.round(p.annualSavings * 100) / 100,
+      cumulative_net_cash_flow_usd: Math.round(p.cumulativeCashFlow * 100) / 100,
+      battery_state_of_health_pct: Math.round(p.sohPercent * 10) / 10,
+      annual_cycles: Math.round(p.cyclesThisYear),
+    }));
+
+    // 3. Assemble self-describing schema
+    const exportPayload = {
+      metadata: {
+        export_timestamp: new Date().toISOString(),
+        simulation_horizon_years: projectionHorizon,
+        currency: 'USD',
+      },
+      inputs_config: {
+        active_battery_profile: {
+          profile_name: profile.name,
+          total_storage_capacity_kwh: profile.totalCapacityKwh,
+          usable_depth_of_discharge_pct: profile.usableDodPercent,
+          max_continuous_output_kw: profile.maxContinuousOutputKw,
+          round_trip_efficiency_pct: profile.roundTripEfficiencyPercent,
+          total_installed_cost_usd: profile.installedCost,
+          inverter_replacement_reserve_usd: replacementCostTotal || (financials?.replacementCost ?? 1800.0),
+          inverter_replacement_year: replacementYear || (financials?.replacementYear ?? 10),
+        },
+        financial_macro_params: {
+          electricity_inflation_rate_pct: financials?.annualElectricityInflationRate ?? 3.5,
+          battery_degradation_rate_pct: financials?.annualBatteryDegradationRate ?? 2.0,
+          discount_rate_pct: discountRatePercent ?? (financials?.discountRatePercent ?? 5.0),
+          opportunity_cost_benchmark_rate_pct: opportunityCostRate ?? (financials?.opportunityCostRatePercent ?? 4.5),
+          financing: {
+            is_financed: Boolean(isFinanced),
+            loan_apr_pct: financials?.loanAprPercent ?? 6.5,
+            loan_term_years: financials?.loanTermYears ?? 10,
+          },
+        },
+        resilience_params: {
+          critical_home_load_kw: criticalLoadPowerKw ?? (financials?.criticalLoadPowerKw ?? 1.5),
+          value_of_lost_load_usd_per_day: financials?.valueOfLostLoadPerDay ?? 100.0,
+        },
+      },
+      summary_kpis: {
+        net_upfront_installed_cost_usd: Math.round(netInstalledCost * 100) / 100,
+        net_present_value_usd: Math.round(npv * 100) / 100,
+        internal_rate_of_return_pct: irrPercent !== null ? Math.round(irrPercent * 100) / 100 : null,
+        simple_payback_period_years: paybackYears !== null ? Math.round(paybackYears * 100) / 100 : null,
+        discounted_payback_period_years: discountedPaybackPeriodYears,
+        levelized_cost_of_storage_usd_per_kwh: Math.round(lcosPerKwh * 1000) / 1000,
+        end_of_life_state_of_health_pct: Math.round(endOfLifeSohPercent * 10) / 10,
+        cycle_warranty_exhausted_year: warrantedCycleExhaustionYear ?? null,
+        outage_backup_autonomy_hours: Math.round(outageAutonomyHours * 10) / 10,
+        net_monthly_cash_flow_usd: Math.round(netMonthlyCashFlow * 100) / 100,
+      },
+      annual_time_series: annualTimeSeries,
+    };
+
+    const jsonString = JSON.stringify(exportPayload, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'battery_analysis_export.json');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setHasExportedJson(true);
+    setTimeout(() => setHasExportedJson(false), 3000);
   };
 
   // SVG Chart Dimensions for Crossover Chart
@@ -735,7 +835,26 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             Tariff: <strong className="text-cyan-400">{activeTouProfile?.name || 'Standard TOU'}</strong> · Battery: <strong className="text-emerald-400">{profile.name}</strong> ({profile.model}) · Mode: {isFinanced ? 'Loan Financed' : 'Cash Purchase'}.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExportLlmJson}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border whitespace-nowrap shadow-sm ${
+              hasExportedJson
+                ? 'bg-emerald-600 text-white border-emerald-400 shadow-emerald-900/50'
+                : 'text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/90 border-emerald-500/50 shadow-emerald-950 hover:border-emerald-400'
+            }`}
+            title="Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting"
+          >
+            {hasExportedJson ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-white" />
+            ) : (
+              <FileJson className="h-3.5 w-3.5 text-emerald-400" />
+            )}
+            <span>
+              {hasExportedJson ? 'Exported battery_analysis_export.json' : 'Export Analysis for LLM (.json)'}
+            </span>
+          </button>
+
           <button
             onClick={handleExportProjectionsCsv}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap"
@@ -1239,6 +1358,16 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* LLM JSON Export Shortcut */}
+            <button
+              onClick={handleExportLlmJson}
+              className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 transition-colors shadow-sm"
+              title="Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting"
+            >
+              <FileJson className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Export Analysis for LLM (.json)</span>
+            </button>
           </div>
 
           {/* RIGHT-SIDE SVG CHART CANVAS */}
