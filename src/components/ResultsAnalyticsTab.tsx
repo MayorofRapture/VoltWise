@@ -32,11 +32,13 @@ import {
 } from 'lucide-react';
 import {
   BatteryProfile,
+  CsvValidationResult,
   MacroFinancials,
   ProfileFinancialAnalysis,
   RateTier,
   TouProfile,
 } from '../types/energy';
+import { buildExportLlmJson } from '../utils/exportJson';
 
 interface ResultsAnalyticsTabProps {
   activeAnalysis: ProfileFinancialAnalysis | null;
@@ -45,6 +47,7 @@ interface ResultsAnalyticsTabProps {
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
   financials?: MacroFinancials;
+  csvResult?: CsvValidationResult | null;
 }
 
 interface ResultsAnalyticsContentProps {
@@ -54,6 +57,7 @@ interface ResultsAnalyticsContentProps {
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
   financials?: MacroFinancials;
+  csvResult?: CsvValidationResult | null;
 }
 
 const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
@@ -63,7 +67,11 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   tiers,
   activeTouProfile,
   financials,
+  csvResult,
 }) => {
+  const completeness = csvResult?.completeness;
+  const isPartialPeriod = Boolean(completeness && !completeness.isSuitableForAnnualProjection);
+
   // Chart Controls State
   const [projectionHorizon, setProjectionHorizon] = useState<number>(15); // 1 to 25 years
   const [granularity, setGranularity] = useState<'annual' | 'monthly'>('annual');
@@ -336,84 +344,14 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Export complete analysis structured for LLM analysis & reporting (.json)
   const handleExportLlmJson = () => {
-    // 1. Calculate discounted payback period (where cumulative discounted cash flow crosses $0)
-    let discountedPaybackPeriodYears: number | null = null;
-    if (projections && projections.length > 0) {
-      for (let i = 0; i < projections.length; i++) {
-        const p = projections[i];
-        if (p.cumulativeNpv >= 0) {
-          if (i === 0) {
-            discountedPaybackPeriodYears = 1.0;
-          } else {
-            const prev = projections[i - 1];
-            const denom = p.cumulativeNpv - prev.cumulativeNpv;
-            const fraction = denom !== 0 ? (0 - prev.cumulativeNpv) / denom : 0;
-            discountedPaybackPeriodYears = Math.round((prev.year + fraction) * 100) / 100;
-          }
-          break;
-        }
-      }
-    }
-
-    // 2. Format annual time series up to active projection horizon
-    const annualTimeSeries = (projections || []).slice(0, projectionHorizon).map((p) => ({
-      year: p.year,
-      baseline_electricity_spend_usd: Math.round(p.baselineCost * 100) / 100,
-      with_battery_electricity_spend_usd: Math.round(p.withBatteryCost * 100) / 100,
-      annual_net_savings_usd: Math.round(p.annualSavings * 100) / 100,
-      cumulative_net_cash_flow_usd: Math.round(p.cumulativeCashFlow * 100) / 100,
-      battery_state_of_health_pct: Math.round(p.sohPercent * 10) / 10,
-      annual_cycles: Math.round(p.cyclesThisYear),
-    }));
-
-    // 3. Assemble self-describing schema
-    const exportPayload = {
-      metadata: {
-        export_timestamp: new Date().toISOString(),
-        simulation_horizon_years: projectionHorizon,
-        currency: 'USD',
-      },
-      inputs_config: {
-        active_battery_profile: {
-          profile_name: profile.name,
-          total_storage_capacity_kwh: profile.totalCapacityKwh,
-          usable_depth_of_discharge_pct: profile.usableDodPercent,
-          max_continuous_output_kw: profile.maxContinuousOutputKw,
-          round_trip_efficiency_pct: profile.roundTripEfficiencyPercent,
-          total_installed_cost_usd: profile.installedCost,
-          inverter_replacement_reserve_usd: replacementCostTotal || (financials?.replacementCost ?? 1800.0),
-          inverter_replacement_year: replacementYear || (financials?.replacementYear ?? 10),
-        },
-        financial_macro_params: {
-          electricity_inflation_rate_pct: financials?.annualElectricityInflationRate ?? 3.5,
-          battery_degradation_rate_pct: financials?.annualBatteryDegradationRate ?? 2.0,
-          discount_rate_pct: discountRatePercent ?? (financials?.discountRatePercent ?? 5.0),
-          opportunity_cost_benchmark_rate_pct: opportunityCostRate ?? (financials?.opportunityCostRatePercent ?? 4.5),
-          financing: {
-            is_financed: Boolean(isFinanced),
-            loan_apr_pct: financials?.loanAprPercent ?? 6.5,
-            loan_term_years: financials?.loanTermYears ?? 10,
-          },
-        },
-        resilience_params: {
-          critical_home_load_kw: criticalLoadPowerKw ?? (financials?.criticalLoadPowerKw ?? 1.5),
-          value_of_lost_load_usd_per_day: financials?.valueOfLostLoadPerDay ?? 100.0,
-        },
-      },
-      summary_kpis: {
-        net_upfront_installed_cost_usd: Math.round(netInstalledCost * 100) / 100,
-        net_present_value_usd: Math.round(npv * 100) / 100,
-        internal_rate_of_return_pct: irrPercent !== null ? Math.round(irrPercent * 100) / 100 : null,
-        simple_payback_period_years: paybackYears !== null ? Math.round(paybackYears * 100) / 100 : null,
-        discounted_payback_period_years: discountedPaybackPeriodYears,
-        levelized_cost_of_storage_usd_per_kwh: Math.round(lcosPerKwh * 1000) / 1000,
-        end_of_life_state_of_health_pct: Math.round(endOfLifeSohPercent * 10) / 10,
-        cycle_warranty_exhausted_year: warrantedCycleExhaustionYear ?? null,
-        outage_backup_autonomy_hours: Math.round(outageAutonomyHours * 10) / 10,
-        net_monthly_cash_flow_usd: Math.round(netMonthlyCashFlow * 100) / 100,
-      },
-      annual_time_series: annualTimeSeries,
-    };
+    const exportPayload = buildExportLlmJson({
+      activeAnalysis,
+      projectionHorizon,
+      tiers,
+      activeTouProfile,
+      financials,
+      csvResult,
+    });
 
     const jsonString = JSON.stringify(exportPayload, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
@@ -865,8 +803,28 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         </div>
       </div>
 
+      {/* PARTIAL-PERIOD DATASET WARNING BANNER */}
+      {isPartialPeriod && (
+        <div className="rounded-xl border border-amber-500/50 bg-amber-950/30 p-4 text-xs space-y-2 shadow-sm">
+          <div className="flex items-center gap-2 font-bold text-amber-300 uppercase tracking-wider text-[11px]">
+            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+            <span>Partial-Period Dataset ({completeness?.durationDays ?? daysInDataset} Days) — Multi-Year Annual Projections Disabled</span>
+          </div>
+          <p className="text-slate-300 leading-relaxed">
+            {completeness?.reason || `Dataset covers only ${completeness?.durationDays ?? daysInDataset} days. Long-term multi-year projections (NPV, IRR, Payback, 15/25-year cumulative cash flows) require approximately one full year (~365 days) of continuous data and have been disabled to prevent inaccurate long-term forecasts.`}
+          </p>
+          <div className="flex flex-wrap gap-4 text-[11px] font-mono text-amber-300/90 pt-1 border-t border-amber-500/20">
+            <span>Observed Span: <strong>{completeness?.durationDays ?? daysInDataset} days</strong></span>
+            <span>Intervals: <strong>{completeness?.intervalCount || annualSummary.totalIntervals}</strong> (Expected: {completeness?.expectedIntervalCount})</span>
+            {completeness?.startDate && <span>Start: <strong>{completeness.startDate}</strong></span>}
+            {completeness?.endDate && <span>End: <strong>{completeness.endDate}</strong></span>}
+            <span className="text-amber-400 font-semibold">Exploratory 24h dispatch views remain active below</span>
+          </div>
+        </div>
+      )}
+
       {/* TIME VALUE OF MONEY (TVM) WARNING CALLOUT (if nominal profit > 0 but NPV < 0) */}
-      {isNpvNegativeWithPositiveProfit && (
+      {!isPartialPeriod && isNpvNegativeWithPositiveProfit && (
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-xs space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-amber-400 uppercase tracking-wider text-[11px]">
             <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
@@ -883,7 +841,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       )}
 
       {/* WARRANTY RISK CALLOUT (if cycles void warranty before simple payback) */}
-      {isWarrantyVoidedBeforePayback && (
+      {!isPartialPeriod && isWarrantyVoidedBeforePayback && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-4 text-xs space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-rose-400 uppercase tracking-wider text-[11px]">
             <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
@@ -921,10 +879,30 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         {/* Card 2: Year 1 Savings & Net Monthly Cash Flow */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>{isFinanced ? 'Net Monthly Cash Flow' : 'Year 1 Energy Savings'}</span>
+            <span>
+              {isPartialPeriod
+                ? `Partial-Period Savings (${completeness?.durationDays ?? daysInDataset}d)`
+                : isFinanced
+                ? 'Net Monthly Cash Flow'
+                : 'Year 1 Energy Savings'}
+            </span>
             <Zap className="h-4 w-4 text-emerald-400" />
           </div>
-          {isFinanced ? (
+          {isPartialPeriod ? (
+            <div>
+              <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
+                ${year1Savings.toLocaleString()}
+                <span className="text-xs text-slate-400 font-sans ml-1 font-normal">
+                  / {completeness?.durationDays ?? daysInDataset} days
+                </span>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+                <span className="text-amber-400 font-medium">Partial data — not annualized</span>
+                <span>·</span>
+                <span className="text-emerald-400 font-semibold">-{annualSummary.savingsPercentage}% period cut</span>
+              </div>
+            </div>
+          ) : isFinanced ? (
             <div>
               <div className={`text-2xl font-bold font-mono tabular-nums ${isCashFlowPositiveDay1 ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {netMonthlyCashFlow >= 0 ? `+$${netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(netMonthlyCashFlow).toFixed(2)}`}
@@ -959,16 +937,22 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
           <div className="flex items-baseline justify-between">
             <span className="text-2xl font-bold text-amber-300 font-mono tabular-nums">
-              {paybackFormatted}
+              {isPartialPeriod ? 'Disabled' : paybackFormatted}
             </span>
             <span className="text-xs font-mono font-bold text-cyan-300">
-              {irrPercent !== null ? `IRR: ${irrPercent}%` : 'IRR: <0%'}
+              {isPartialPeriod ? 'Partial Data' : irrPercent !== null ? `IRR: ${irrPercent}%` : 'IRR: <0%'}
             </span>
           </div>
           <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            <span>Discount Rate: {discountRatePercent}%</span>
-            <span>·</span>
-            <span>{annualSummary.equivalentFullCycles} cycles/yr</span>
+            {isPartialPeriod ? (
+              <span className="text-amber-400 font-medium">Requires ~1-year dataset for payback</span>
+            ) : (
+              <>
+                <span>Discount Rate: {discountRatePercent}%</span>
+                <span>·</span>
+                <span>{annualSummary.equivalentFullCycles} cycles/yr</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -978,13 +962,19 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             <span>Net Present Value (NPV)</span>
             <TrendingUp className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className={`text-2xl font-bold font-mono tabular-nums ${npv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
-            {npv >= 0 ? `+$${npv.toLocaleString()}` : `-$${Math.abs(npv).toLocaleString()}`}
+          <div className={`text-2xl font-bold font-mono tabular-nums ${isPartialPeriod ? 'text-slate-400' : npv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
+            {isPartialPeriod ? 'Disabled' : npv >= 0 ? `+$${npv.toLocaleString()}` : `-$${Math.abs(npv).toLocaleString()}`}
           </div>
           <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            <span className="text-slate-300 font-mono">Profit: ${lifetimeNetProfit.toLocaleString()}</span>
-            <span>·</span>
-            <span className="text-emerald-400 font-mono">ROI: +{lifetimeRoiPercent}%</span>
+            {isPartialPeriod ? (
+              <span className="text-amber-400 font-medium">Requires ~1-year dataset for NPV</span>
+            ) : (
+              <>
+                <span className="text-slate-300 font-mono">Profit: ${lifetimeNetProfit.toLocaleString()}</span>
+                <span>·</span>
+                <span className="text-emerald-400 font-mono">ROI: +{lifetimeRoiPercent}%</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1158,7 +1148,23 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
         </div>
 
+        {isPartialPeriod && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-5 text-center space-y-2">
+            <div className="flex items-center justify-center gap-2 text-amber-300 font-bold text-sm">
+              <AlertTriangle className="h-5 w-5 text-amber-400" />
+              <span>Multi-Year Financial Projections Disabled for Incomplete Dataset</span>
+            </div>
+            <p className="text-xs text-slate-300 max-w-2xl mx-auto leading-relaxed">
+              The uploaded dataset spans {completeness?.durationDays ?? daysInDataset} days. Long-term multi-year projections (cumulative cash flows, NPV, simple and discounted payback) require approximately one full year (~365 days) of continuous data and have been disabled to prevent misleading annual forecasts.
+            </p>
+            <p className="text-[11px] text-amber-400/90 font-mono">
+              Please upload a complete 365-day (8,760-hour) dataset to view multi-year financial projections. Exploratory 24-hour dispatch and median daily load charts below remain fully functional.
+            </p>
+          </div>
+        )}
+
         {/* 2-COLUMN LAYOUT: LEFT-SIDE CONTROLS + RIGHT-SIDE CHART */}
+        {!isPartialPeriod && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* LEFT-SIDE CONTROL PANEL */}
           <div className="lg:col-span-4 xl:col-span-3 space-y-5 bg-slate-950/80 p-4 rounded-xl border border-slate-800/90 text-xs">
@@ -1690,6 +1696,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* VISUALIZATION 2: 24-HOUR DISPATCH EXPLORER & HEATMAP */}
@@ -2860,6 +2867,7 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
   tiers,
   activeTouProfile,
   financials,
+  csvResult,
 }) => {
   if (!activeAnalysis) {
     return (
@@ -2881,6 +2889,7 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
       tiers={tiers}
       activeTouProfile={activeTouProfile}
       financials={financials}
+      csvResult={csvResult}
     />
   );
 };

@@ -222,6 +222,7 @@ export default function App() {
             tiers={tiers}
             activeTouProfile={activeTouProfile}
             financials={financials}
+            csvResult={csvResult}
           />
         )}
 

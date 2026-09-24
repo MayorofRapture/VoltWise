@@ -5,7 +5,7 @@
  * Example:
  * 09/22/2025, 12:00 AM, 1.018, 25.075, kWh
  */
-import { CsvValidationResult, IntervalDataPoint } from '../types/energy';
+import { CsvValidationResult, DatasetCompleteness, IntervalDataPoint } from '../types/energy';
 
 interface ParsedDay {
   year: number;
