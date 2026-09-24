@@ -12,6 +12,8 @@ import {
   TouSeason,
   YearProjection,
   AnnualSimulationSummary,
+  HorizonFinancialSummary,
+  DatasetCompleteness,
 } from '../types/energy';
 
 /**
@@ -522,9 +524,11 @@ export function runAnnualSimulation(
   const maxChargeEnergyInterval = profile.maxContinuousChargeKw * intervalHours;
   const maxDischargeEnergyInterval = profile.maxContinuousOutputKw * intervalHours;
 
-  let currentSocKwh = usableCapacityKwh * 0.5; // Start at 50% state of charge
-  // Track weighted average stored energy cost per kWh for economic export determination
-  let averageStoredCostPerKwh = (defaultTier.buyRate || 0.15) / etaCharge;
+  let initialSyntheticSocKwh = usableCapacityKwh * 0.5; // Start at 50% state of charge
+  let gridChargedSocKwh = 0; // Stored energy actually charged from the grid during simulation
+  let gridChargedTotalCost = 0; // Cumulative purchase cost of grid energy stored in battery
+  let currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
+
   let baselineTotalCost = 0;
   let simulatedTotalCost = 0;
   let totalHomeLoad = 0;
@@ -594,13 +598,12 @@ export function runAnnualSimulation(
         
         if (energyToStore > 0) {
           const costOfNewEnergy = energyToStore * (buyRate / etaCharge);
-          const currentTotalCost = currentSocKwh * averageStoredCostPerKwh;
-          const newTotalEnergy = currentSocKwh + energyToStore;
-          averageStoredCostPerKwh = newTotalEnergy > 0 ? (currentTotalCost + costOfNewEnergy) / newTotalEnergy : 0;
+          gridChargedSocKwh += energyToStore;
+          gridChargedTotalCost += costOfNewEnergy;
         }
 
         batChargeKwh = energyToStore;
-        currentSocKwh += energyToStore;
+        currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
         gridImportKwh = loadKwh + gridForBat;
         gridExportKwh = 0;
       } else if (isDesignatedDischarge && currentSocKwh > 0.01) {
@@ -610,24 +613,41 @@ export function runAnnualSimulation(
         const dischargeForHome = Math.min(loadKwh, maxDischargeEnergyInterval, availableToDeliver);
         const batteryEnergyDrainedHome = dischargeForHome / etaDischarge;
         
-        currentSocKwh = Math.max(0, currentSocKwh - batteryEnergyDrainedHome);
+        if (batteryEnergyDrainedHome > 0) {
+          // Drain from synthetic initial SOC first (serves household load, but has no export provenance)
+          const drainSynthetic = Math.min(initialSyntheticSocKwh, batteryEnergyDrainedHome);
+          initialSyntheticSocKwh -= drainSynthetic;
+          const drainGridCharged = batteryEnergyDrainedHome - drainSynthetic;
+          if (drainGridCharged > 0) {
+            const avgCost = gridChargedSocKwh > 0 ? gridChargedTotalCost / gridChargedSocKwh : 0;
+            gridChargedSocKwh = Math.max(0, gridChargedSocKwh - drainGridCharged);
+            gridChargedTotalCost = Math.max(0, gridChargedTotalCost - drainGridCharged * avgCost);
+          }
+          currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
+        }
+
         const remainingHomeLoad = Math.max(0, loadKwh - dischargeForHome);
         gridImportKwh = remainingHomeLoad;
         batDischargeKwh = dischargeForHome;
 
         // Grid Export Logic:
-        // When allowGridExport is true: only export if sell rate > effective delivered cost (RTE considered)
-        // When allowGridExport is false: no intentional grid export is permitted
+        // Only grid-charged energy with a known acquisition cost is eligible for economic export.
+        // Synthetic initial SOC is NEVER exported for arbitrage.
         const remainingInverterCapacity = maxDischargeEnergyInterval - dischargeForHome;
-        const effectiveDeliveryCost = averageStoredCostPerKwh / etaDischarge;
-        const isExportEconomic = sellRate > effectiveDeliveryCost;
+        const avgCostPerKwh = gridChargedSocKwh > 0 ? gridChargedTotalCost / gridChargedSocKwh : 0;
+        const effectiveDeliveryCost = avgCostPerKwh / etaDischarge;
+        const isExportEconomic = profile.allowGridExport && gridChargedSocKwh > 0.01 && avgCostPerKwh > 0 && sellRate > effectiveDeliveryCost;
 
-        if (profile.allowGridExport && isExportEconomic && remainingInverterCapacity > 0.05 && currentSocKwh > 0.1) {
-          const exportDeliverable = Math.min(remainingInverterCapacity, currentSocKwh * etaDischarge);
-          const batteryDrainedExport = exportDeliverable / etaDischarge;
-          currentSocKwh = Math.max(0, currentSocKwh - batteryDrainedExport);
-          batDischargeKwh += exportDeliverable;
-          gridExportKwh = exportDeliverable;
+        if (isExportEconomic && remainingInverterCapacity > 0.05) {
+          const exportDeliverable = Math.min(remainingInverterCapacity, gridChargedSocKwh * etaDischarge);
+          if (exportDeliverable > 0) {
+            const batteryDrainedExport = exportDeliverable / etaDischarge;
+            gridChargedSocKwh = Math.max(0, gridChargedSocKwh - batteryDrainedExport);
+            gridChargedTotalCost = Math.max(0, gridChargedTotalCost - batteryDrainedExport * avgCostPerKwh);
+            currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
+            batDischargeKwh += exportDeliverable;
+            gridExportKwh = exportDeliverable;
+          }
         }
       } else {
         // Idle interval
@@ -636,7 +656,7 @@ export function runAnnualSimulation(
       }
     } else {
       // SELF-CONSUMPTION MODE:
-      // 1. Discharge battery whenever home load exists to minimize grid consumption
+      // 1. Discharge battery whenever home load exists to minimize grid consumption (strictly constrained to configured discharge tiers)
       // 2. Charge only during designated off-peak / super-off-peak intervals
       if (isDesignatedCharge && currentSocKwh < usableCapacityKwh) {
         const roomInBattery = usableCapacityKwh - currentSocKwh;
@@ -645,22 +665,32 @@ export function runAnnualSimulation(
         
         if (energyToStore > 0) {
           const costOfNewEnergy = energyToStore * (buyRate / etaCharge);
-          const currentTotalCost = currentSocKwh * averageStoredCostPerKwh;
-          const newTotalEnergy = currentSocKwh + energyToStore;
-          averageStoredCostPerKwh = newTotalEnergy > 0 ? (currentTotalCost + costOfNewEnergy) / newTotalEnergy : 0;
+          gridChargedSocKwh += energyToStore;
+          gridChargedTotalCost += costOfNewEnergy;
         }
 
         batChargeKwh = energyToStore;
-        currentSocKwh += energyToStore;
+        currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
         gridImportKwh = loadKwh + gridForBat;
         gridExportKwh = 0;
-      } else if (loadKwh > 0 && currentSocKwh > 0.01) {
+      } else if (isDesignatedDischarge && loadKwh > 0 && currentSocKwh > 0.01) {
         // Discharge to offset home load
         const availableToDeliver = currentSocKwh * etaDischarge;
         const dischargeForHome = Math.min(loadKwh, maxDischargeEnergyInterval, availableToDeliver);
         const batteryEnergyDrained = dischargeForHome / etaDischarge;
         
-        currentSocKwh = Math.max(0, currentSocKwh - batteryEnergyDrained);
+        if (batteryEnergyDrained > 0) {
+          const drainSynthetic = Math.min(initialSyntheticSocKwh, batteryEnergyDrained);
+          initialSyntheticSocKwh -= drainSynthetic;
+          const drainGridCharged = batteryEnergyDrained - drainSynthetic;
+          if (drainGridCharged > 0) {
+            const avgCost = gridChargedSocKwh > 0 ? gridChargedTotalCost / gridChargedSocKwh : 0;
+            gridChargedSocKwh = Math.max(0, gridChargedSocKwh - drainGridCharged);
+            gridChargedTotalCost = Math.max(0, gridChargedTotalCost - drainGridCharged * avgCost);
+          }
+          currentSocKwh = initialSyntheticSocKwh + gridChargedSocKwh;
+        }
+
         batDischargeKwh = dischargeForHome;
         gridImportKwh = Math.max(0, loadKwh - dischargeForHome);
         gridExportKwh = 0;
@@ -672,6 +702,11 @@ export function runAnnualSimulation(
 
     // Keep SoC within realistic floating bounds
     currentSocKwh = Math.max(0, Math.min(usableCapacityKwh, currentSocKwh));
+    if (currentSocKwh === 0) {
+      initialSyntheticSocKwh = 0;
+      gridChargedSocKwh = 0;
+      gridChargedTotalCost = 0;
+    }
     const socPercent = usableCapacityKwh > 0 ? (currentSocKwh / usableCapacityKwh) * 100 : 0;
 
     // Financial outcome of interval
@@ -708,16 +743,24 @@ export function runAnnualSimulation(
   const equivalentFullCycles = usableCapacityKwh > 0 ? totalBatteryDischarged / usableCapacityKwh : 0;
   const year1Savings = baselineTotalCost - simulatedTotalCost;
   const savingsPercentage = baselineTotalCost > 0 ? (year1Savings / baselineTotalCost) * 100 : 0;
+  const durationDays = intervalHours > 0 ? Math.round((dataPoints.length * intervalHours) / 24) : Math.round(dataPoints.length / 24);
+  const isSuitableForAnnual = dataPoints.length >= 8760 * 0.95 && durationDays >= 360;
 
   return {
     profileId: profile.id,
     profileName: profile.name,
     totalIntervals: dataPoints.length,
     intervalHours,
+    durationDays,
+    isSuitableForAnnualProjection: isSuitableForAnnual,
     totalHomeLoadKwh: Math.round(totalHomeLoad * 10) / 10,
     baselineAnnualCost: Math.round(baselineTotalCost * 100) / 100,
     simulatedAnnualCost: Math.round(simulatedTotalCost * 100) / 100,
     year1Savings: Math.round(year1Savings * 100) / 100,
+    // Explicit period aliases
+    baselinePeriodCost: Math.round(baselineTotalCost * 100) / 100,
+    simulatedPeriodCost: Math.round(simulatedTotalCost * 100) / 100,
+    periodSavings: Math.round(year1Savings * 100) / 100,
     savingsPercentage: Math.round(savingsPercentage * 10) / 10,
     annualGridImportKwh: Math.round(totalGridImport * 10) / 10,
     annualGridExportKwh: Math.round(totalGridExport * 10) / 10,
@@ -1100,13 +1143,141 @@ export function calculate15YearFinancials(
     lifetimeNetProfitWithVoll: Math.round(lifetimeNetProfitWithVoll),
     lifetimeRoiWithVollPercent: Math.round(lifetimeRoiWithVollPercent * 10) / 10,
 
-    // Multi-Year Projections
+    // Multi-Year Projections (25-Year Lifetime Model)
     projections,
 
-    // Backward Compatibility Aliases
-    projections15Yr: projections,
-    lifetimeTotalSavings15Yr: Math.round(lifetimeSavingsTotal),
-    lifetimeNetProfit15Yr: Math.round(lifetimeNetProfit),
-    npv15Yr: Math.round(npv),
+    // Explicit Full 25-Year Lifetime Results
+    lifetime25YearNpv: Math.round(npv),
+    lifetime25YearNetProfit: Math.round(lifetimeNetProfit),
+    lifetime25YearRoiPercent: Math.round(lifetimeRoiPercent * 10) / 10,
+    lifetime25YearSavings: Math.round(lifetimeSavingsTotal),
+
+    // Genuine 15-Year Horizon Aliases (derived for the first 15 years)
+    projections15Yr: projections.slice(0, 15),
+    lifetimeTotalSavings15Yr: Math.round(
+      projections.slice(0, 15).reduce((sum, p) => sum + p.annualSavings, 0)
+    ),
+    lifetimeNetProfit15Yr: Math.round(projections[14]?.cumulativeCashFlow ?? 0),
+    npv15Yr: Math.round(projections[14]?.cumulativeNpv ?? 0),
   };
+}
+
+/**
+ * Authoritative helper to derive horizon-specific financial, lifecycle, and asset metrics
+ * from a ProfileFinancialAnalysis.
+ * Used by both UI components and JSON/CSV export layers to ensure a single source of truth.
+ */
+export function deriveHorizonFinancialSummary(
+  analysis: ProfileFinancialAnalysis,
+  horizonYears: number
+): HorizonFinancialSummary {
+  const safeHorizon = Math.max(1, Math.min(analysis.projections.length, Math.round(horizonYears)));
+  const horizonProjections = (analysis.projections || []).slice(0, safeHorizon);
+  const lastProj = horizonProjections[safeHorizon - 1] || analysis.projections[0];
+
+  const cumulativeSavings = horizonProjections.reduce((sum, p) => sum + p.annualSavings, 0);
+  const totalReplacementCost = horizonProjections.reduce((sum, p) => sum + p.replacementExpense, 0);
+  const totalLoanPayments = horizonProjections.reduce((sum, p) => sum + p.annualLoanPayment, 0);
+  const taxCreditInflows = horizonProjections.reduce((sum, p) => sum + (p.taxCreditInflow || 0), 0);
+
+  // Authoritative net profit for horizon = cumulativeCashFlow at year `safeHorizon`
+  const cumulativeCashFlow = lastProj ? lastProj.cumulativeCashFlow : -analysis.upfrontOutOfPocket;
+  const netPresentValue = lastProj ? lastProj.cumulativeNpv : analysis.npv;
+
+  const endOfHorizonSohPercent = lastProj ? lastProj.sohPercent : 100;
+  const endOfHorizonUsableCapacityKwh = lastProj ? lastProj.usableCapacityKwh : analysis.profile.totalCapacityKwh;
+  const cumulativeCycles = lastProj ? lastProj.cumulativeCycles : 0;
+
+  const warrantedCyclesExhausted = horizonProjections.some((p) => p.warrantedCyclesExceeded);
+  const cycleExhaustionYear =
+    analysis.warrantedCycleExhaustionYear !== null && analysis.warrantedCycleExhaustionYear <= safeHorizon
+      ? analysis.warrantedCycleExhaustionYear
+      : null;
+
+  const simplePaybackYears =
+    analysis.paybackYears !== null && analysis.paybackYears <= safeHorizon
+      ? analysis.paybackYears
+      : null;
+
+  // Discounted payback period within horizon (where cumulative NPV crosses >= 0)
+  let discountedPaybackYears: number | null = null;
+  for (let i = 0; i < horizonProjections.length; i++) {
+    const p = horizonProjections[i];
+    if (p.cumulativeNpv >= 0) {
+      if (i === 0) {
+        discountedPaybackYears = 1.0;
+      } else {
+        const prev = horizonProjections[i - 1];
+        const denom = p.cumulativeNpv - prev.cumulativeNpv;
+        const fraction = denom !== 0 ? (0 - prev.cumulativeNpv) / denom : 0;
+        discountedPaybackYears = Math.round((prev.year + fraction) * 10) / 10;
+      }
+      break;
+    }
+  }
+
+  // Horizon ROI
+  const totalCapitalOutlay =
+    analysis.upfrontOutOfPocket + totalLoanPayments + totalReplacementCost;
+  const horizonRoiPercent =
+    totalCapitalOutlay > 0
+      ? Math.round(((cumulativeCashFlow / totalCapitalOutlay) * 100) * 10) / 10
+      : 0;
+
+  // Opportunity cost at target horizon
+  const oppRate = (analysis.opportunityCostRate || 4.5) / 100;
+  const opportunityCostFutureValue = Math.round(
+    analysis.upfrontOutOfPocket * Math.pow(1 + oppRate, safeHorizon)
+  );
+  const opportunityCostProfit = Math.max(0, opportunityCostFutureValue - analysis.upfrontOutOfPocket);
+  const opportunityCostDiff = cumulativeCashFlow - opportunityCostProfit;
+
+  return {
+    horizonYears: safeHorizon,
+    netPresentValue: Math.round(netPresentValue),
+    cumulativeCashFlow: Math.round(cumulativeCashFlow),
+    cumulativeSavings: Math.round(cumulativeSavings),
+    totalReplacementCost: Math.round(totalReplacementCost),
+    totalLoanPayments: Math.round(totalLoanPayments),
+    taxCreditInflows: Math.round(taxCreditInflows),
+    endOfHorizonSohPercent,
+    endOfHorizonUsableCapacityKwh,
+    cumulativeCycles,
+    warrantedCyclesExhausted,
+    cycleExhaustionYear,
+    simplePaybackYears,
+    discountedPaybackYears,
+    horizonRoiPercent,
+    opportunityCostFutureValue,
+    opportunityCostProfit,
+    opportunityCostDiff,
+  };
+}
+
+/**
+ * Checks whether a dataset is suitable for multi-year financial projections.
+ */
+export function isDatasetSuitableForAnnualProjections(
+  completeness?: DatasetCompleteness | null
+): boolean {
+  if (!completeness) return false;
+  return Boolean(completeness.isSuitableForAnnualProjection);
+}
+
+/**
+ * Derives the savings label for the application header.
+ */
+export function getHeaderSavingsLabel(isSuitableForAnnual: boolean): string {
+  return isSuitableForAnnual ? 'Year 1 Savings' : 'Period Savings';
+}
+
+/**
+ * Returns formatted payback for header if dataset is suitable for annual projection, otherwise null.
+ */
+export function getHeaderPaybackText(
+  analysis: ProfileFinancialAnalysis | null,
+  isSuitableForAnnual: boolean
+): string | null {
+  if (!isSuitableForAnnual || !analysis) return null;
+  return analysis.paybackFormatted;
 }

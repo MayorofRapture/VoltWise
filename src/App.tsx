@@ -16,6 +16,7 @@ import {
   ProfileFinancialAnalysis,
   RateTier,
   TouProfile,
+  AnnualSimulationSummary,
 } from './types/energy';
 import {
   DEFAULT_BATTERY_PROFILES,
@@ -26,6 +27,8 @@ import {
   calculate15YearFinancials,
   createDefaultScheduleMatrix,
   runAnnualSimulation,
+  getHeaderSavingsLabel,
+  getHeaderPaybackText,
 } from './utils/simulationEngine';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
@@ -93,14 +96,14 @@ export default function App() {
     setActiveTab('data');
   };
 
-  // Compute 8,760-hour simulation and 15-year financials for all profiles
-  const allAnalyses = useMemo<ProfileFinancialAnalysis[]>(() => {
+  // 1. Always compute interval simulation summaries for all profiles (works for full or partial datasets)
+  const allSimulationSummaries = useMemo<Record<string, AnnualSimulationSummary>>(() => {
     if (!csvResult || !csvResult.isValid || csvResult.data.length === 0) {
-      return [];
+      return {};
     }
-
-    return profiles.map((profile) => {
-      const annualSummary = runAnnualSimulation(
+    const summaries: Record<string, AnnualSimulationSummary> = {};
+    profiles.forEach((profile) => {
+      summaries[profile.id] = runAnnualSimulation(
         csvResult.data,
         csvResult.intervalHours,
         tiers,
@@ -108,15 +111,32 @@ export default function App() {
         profile,
         activeTouProfile?.seasons
       );
+    });
+    return summaries;
+  }, [csvResult, tiers, scheduleMatrix, profiles, activeTouProfile]);
+
+  const isSuitableForAnnual = Boolean(
+    csvResult?.completeness ? csvResult.completeness.isSuitableForAnnualProjection : true
+  );
+
+  // 2. Compute 25-year financial projections ONLY if dataset is suitable for annual projection
+  const allAnalyses = useMemo<ProfileFinancialAnalysis[]>(() => {
+    if (!isSuitableForAnnual || !csvResult || !csvResult.isValid || csvResult.data.length === 0) {
+      return [];
+    }
+
+    return profiles.map((profile) => {
+      const annualSummary = allSimulationSummaries[profile.id];
       return calculate15YearFinancials(profile, annualSummary, financials);
     });
-  }, [csvResult, tiers, scheduleMatrix, profiles, financials, activeTouProfile]);
+  }, [isSuitableForAnnual, csvResult, profiles, allSimulationSummaries, financials]);
 
-  // Active Profile Analysis
+  // Active Profile Analysis (null for partial/unsuitable datasets)
   const activeAnalysis = useMemo<ProfileFinancialAnalysis | null>(() => {
     return allAnalyses.find((a) => a.profile.id === activeProfileId) || allAnalyses[0] || null;
   }, [allAnalyses, activeProfileId]);
 
+  const activeSimulationSummary = allSimulationSummaries[activeProfileId] || null;
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
 
   return (
@@ -146,7 +166,7 @@ export default function App() {
             </span>
           </div>
 
-          {activeAnalysis && (
+          {activeAnalysis ? (
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-slate-400">
               <span className="flex items-center gap-1">
                 <Bookmark className="h-3 w-3 text-emerald-400" />
@@ -160,7 +180,7 @@ export default function App() {
               </span>
               <span>·</span>
               <span>
-                Year 1 Savings:{' '}
+                {getHeaderSavingsLabel(true)}:{' '}
                 <strong className="text-emerald-400 font-mono">
                   ${activeAnalysis.year1Savings.toLocaleString()}/yr
                 </strong>
@@ -169,11 +189,31 @@ export default function App() {
               <span>
                 Payback:{' '}
                 <strong className="text-amber-300 font-mono">
-                  {activeAnalysis.paybackFormatted}
+                  {getHeaderPaybackText(activeAnalysis, true)}
                 </strong>
               </span>
             </div>
-          )}
+          ) : activeSimulationSummary ? (
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-slate-400">
+              <span className="flex items-center gap-1">
+                <Bookmark className="h-3 w-3 text-emerald-400" />
+                Tariff:{' '}
+                <strong className="text-slate-200">{activeTouProfile.name}</strong>
+              </span>
+              <span>·</span>
+              <span>
+                Battery:{' '}
+                <strong className="text-slate-200">{activeProfile.name}</strong>
+              </span>
+              <span>·</span>
+              <span>
+                {getHeaderSavingsLabel(false)}:{' '}
+                <strong className="text-emerald-400 font-mono">
+                  ${(activeSimulationSummary.periodSavings ?? activeSimulationSummary.year1Savings).toLocaleString()}
+                </strong>
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {/* Tab 1: Data & Rates */}
@@ -218,6 +258,9 @@ export default function App() {
           <ResultsAnalyticsTab
             activeAnalysis={activeAnalysis}
             allAnalyses={allAnalyses}
+            activeSimulationSummary={activeSimulationSummary}
+            allSimulationSummaries={allSimulationSummaries}
+            activeProfile={activeProfile}
             setActiveProfileId={setActiveProfileId}
             tiers={tiers}
             activeTouProfile={activeTouProfile}

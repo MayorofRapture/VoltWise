@@ -11,6 +11,8 @@ import {
   TouProfile,
   YearProjection,
 } from '../types/energy';
+import { APP_VERSION } from '../version';
+import { deriveHorizonFinancialSummary } from './simulationEngine';
 
 export interface ExportLlmJsonParams {
   activeAnalysis: ProfileFinancialAnalysis;
@@ -165,6 +167,10 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
     csvResult,
   } = params;
 
+  if (csvResult?.completeness && !csvResult.completeness.isSuitableForAnnualProjection) {
+    throw new Error('Cannot export multi-year financial projections for an incomplete or partial-period dataset.');
+  }
+
   const {
     profile,
     annualSummary,
@@ -182,7 +188,6 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
     replacementEnabled: analysisReplacementEnabled,
     replacementCostTotal,
     replacementYear: analysisReplacementYear,
-    warrantedCycleExhaustionYear,
     opportunityCostRate,
     opportunityCostVehicleName,
   } = activeAnalysis;
@@ -190,58 +195,16 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
   // Replacement settings: explicit handling of replacementEnabled
   const replacementEnabled = financials?.replacementEnabled ?? analysisReplacementEnabled ?? true;
   const replacementCost = replacementEnabled
-    ? (financials?.replacementCost ?? replacementCostTotal ?? 2000)
+    ? (financials?.replacementCost ?? replacementCostTotal ?? 0)
     : null;
   const replacementYear = replacementEnabled
-    ? (financials?.replacementYear ?? analysisReplacementYear ?? 10)
+    ? (financials?.replacementYear ?? analysisReplacementYear ?? 0)
     : null;
 
-  // Horizon-specific projections slicing
+  // Horizon-specific projections slicing & authoritative summary
   const safeHorizon = Math.max(1, Math.min(25, projectionHorizon));
   const horizonProjections: YearProjection[] = (projections || []).slice(0, safeHorizon);
-  const lastProj = horizonProjections[horizonProjections.length - 1];
-
-  // Horizon-dependent KPIs
-  const horizonNpv = lastProj ? lastProj.cumulativeNpv : activeAnalysis.npv;
-  const horizonCumulativeCashFlow = lastProj ? lastProj.cumulativeCashFlow : -upfrontOutOfPocket;
-  const horizonCumulativeSavings = horizonProjections.reduce((sum, p) => sum + p.annualSavings, 0);
-  const horizonReplacementExpenses = horizonProjections.reduce((sum, p) => sum + p.replacementExpense, 0);
-  const endOfHorizonSoh = lastProj ? lastProj.sohPercent : 100;
-  const endOfHorizonCapacity = lastProj ? lastProj.usableCapacityKwh : profile.totalCapacityKwh;
-  const horizonCumulativeCycles = lastProj ? lastProj.cumulativeCycles : 0;
-  const warrantyExhaustedInHorizon = horizonProjections.some((p) => p.warrantedCyclesExceeded);
-  const cycleExhaustionYearInHorizon =
-    warrantedCycleExhaustionYear !== null && warrantedCycleExhaustionYear <= safeHorizon
-      ? warrantedCycleExhaustionYear
-      : null;
-
-  // Discounted payback period (where cumulative NPV crosses >= 0)
-  let discountedPaybackPeriodYears: number | null = null;
-  for (let i = 0; i < horizonProjections.length; i++) {
-    const p = horizonProjections[i];
-    if (p.cumulativeNpv >= 0) {
-      if (i === 0) {
-        discountedPaybackPeriodYears = 1.0;
-      } else {
-        const prev = horizonProjections[i - 1];
-        const denom = p.cumulativeNpv - prev.cumulativeNpv;
-        const fraction = denom !== 0 ? (0 - prev.cumulativeNpv) / denom : 0;
-        discountedPaybackPeriodYears = Math.round((prev.year + fraction) * 100) / 100;
-      }
-      break;
-    }
-  }
-
-  // Simple payback within horizon
-  const simplePaybackWithinHorizon =
-    activeAnalysis.paybackYears !== null && activeAnalysis.paybackYears <= safeHorizon
-      ? activeAnalysis.paybackYears
-      : null;
-
-  // Opportunity cost at target horizon
-  const oppRate = (opportunityCostRate || 4.5) / 100;
-  const horizonOpportunityFutureVal = Math.round(upfrontOutOfPocket * Math.pow(1 + oppRate, safeHorizon));
-  const horizonOpportunityProfit = Math.max(0, horizonOpportunityFutureVal - upfrontOutOfPocket);
+  const horizonSummary = deriveHorizonFinancialSummary(activeAnalysis, safeHorizon);
 
   // Annual time series up to selected horizon
   const annualTimeSeries = horizonProjections.map((p) => ({
@@ -268,7 +231,7 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
   return {
     metadata: {
       app_name: 'VoltWise',
-      app_version: '1.0.0',
+      app_version: APP_VERSION,
       export_timestamp: new Date().toISOString(),
       selected_horizon_years: safeHorizon,
       currency: 'USD',
@@ -336,8 +299,8 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
       opportunity_cost: {
         vehicle_name: opportunityCostVehicleName,
         benchmark_rate_pct: opportunityCostRate,
-        horizon_future_value_usd: horizonOpportunityFutureVal,
-        horizon_opportunity_profit_usd: horizonOpportunityProfit,
+        horizon_future_value_usd: horizonSummary.opportunityCostFutureValue,
+        horizon_opportunity_profit_usd: horizonSummary.opportunityCostProfit,
       },
       replacement: {
         replacement_enabled: replacementEnabled,
@@ -365,18 +328,18 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
     horizon_summary_kpis: {
       horizon_years: safeHorizon,
       net_upfront_installed_cost_usd: Math.round(netInstalledCost * 100) / 100,
-      horizon_net_present_value_usd: Math.round(horizonNpv * 100) / 100,
-      horizon_cumulative_net_cash_flow_usd: Math.round(horizonCumulativeCashFlow * 100) / 100,
-      horizon_cumulative_savings_usd: Math.round(horizonCumulativeSavings * 100) / 100,
-      horizon_replacement_expenses_usd: Math.round(horizonReplacementExpenses * 100) / 100,
-      discounted_payback_years: discountedPaybackPeriodYears,
-      simple_payback_years: simplePaybackWithinHorizon !== null ? Math.round(simplePaybackWithinHorizon * 100) / 100 : null,
-      end_of_horizon_soh_pct: Math.round(endOfHorizonSoh * 10) / 10,
-      end_of_horizon_usable_capacity_kwh: Math.round(endOfHorizonCapacity * 10) / 10,
-      horizon_cumulative_cycles: Math.round(horizonCumulativeCycles),
+      horizon_net_present_value_usd: Math.round(horizonSummary.netPresentValue * 100) / 100,
+      horizon_cumulative_net_cash_flow_usd: Math.round(horizonSummary.cumulativeCashFlow * 100) / 100,
+      horizon_cumulative_savings_usd: Math.round(horizonSummary.cumulativeSavings * 100) / 100,
+      horizon_replacement_expenses_usd: Math.round(horizonSummary.totalReplacementCost * 100) / 100,
+      discounted_payback_years: horizonSummary.discountedPaybackYears,
+      simple_payback_years: horizonSummary.simplePaybackYears !== null ? Math.round(horizonSummary.simplePaybackYears * 100) / 100 : null,
+      end_of_horizon_soh_pct: Math.round(horizonSummary.endOfHorizonSohPercent * 10) / 10,
+      end_of_horizon_usable_capacity_kwh: Math.round(horizonSummary.endOfHorizonUsableCapacityKwh * 10) / 10,
+      horizon_cumulative_cycles: Math.round(horizonSummary.cumulativeCycles),
       warranted_cycle_limit: profile.ratedCycleLife,
-      warranty_cycles_exhausted_within_horizon: warrantyExhaustedInHorizon,
-      cycle_warranty_exhaustion_year: cycleExhaustionYearInHorizon,
+      warranty_cycles_exhausted_within_horizon: horizonSummary.warrantedCyclesExhausted,
+      cycle_warranty_exhaustion_year: horizonSummary.cycleExhaustionYear,
       levelized_cost_of_storage_usd_per_kwh: Math.round(lcosPerKwh * 1000) / 1000,
       outage_backup_autonomy_hours: Math.round(outageAutonomyHours * 10) / 10,
       outage_backup_autonomy_days: Math.round(outageAutonomyDays * 10) / 10,
@@ -384,4 +347,87 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
     },
     annual_time_series: annualTimeSeries,
   };
+}
+
+/**
+ * Validates whether an analysis can be exported to projection JSON.
+ * Projections cannot be exported for incomplete/partial datasets.
+ */
+export function canExportProjectionsJson(
+  analysis: ProfileFinancialAnalysis | null,
+  csvResult?: CsvValidationResult | null
+): boolean {
+  if (!analysis) return false;
+  if (csvResult?.completeness && !csvResult.completeness.isSuitableForAnnualProjection) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Validates whether an analysis can be exported to projection CSV.
+ * Projections cannot be exported for incomplete/partial datasets.
+ */
+export function canExportProjectionsCsv(
+  analysis: ProfileFinancialAnalysis | null,
+  csvResult?: CsvValidationResult | null
+): boolean {
+  if (!analysis) return false;
+  if (csvResult?.completeness && !csvResult.completeness.isSuitableForAnnualProjection) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Generates projection CSV content from authoritative financial analysis.
+ * Throws an error if called on an incomplete or unsuitable dataset.
+ */
+export function generateProjectionsCsv(
+  analysis: ProfileFinancialAnalysis | null,
+  horizon: number,
+  csvResult?: CsvValidationResult | null
+): string {
+  if (!canExportProjectionsCsv(analysis, csvResult) || !analysis) {
+    throw new Error('Cannot export projection CSV for an incomplete or unsuitable dataset.');
+  }
+
+  const safeHorizon = Math.max(1, Math.min(25, horizon));
+  const projections = (analysis.projections || []).slice(0, safeHorizon);
+
+  const headers = [
+    'Year',
+    'Baseline Spend ($)',
+    'With Battery Spend ($)',
+    'Annual Savings ($)',
+    'Replacement Expense ($)',
+    'Tax Credit Inflow ($)',
+    'Annual Loan Payment ($)',
+    'Net Cash Flow ($)',
+    'Cumulative Cash Flow ($)',
+    'Discounted NPV ($)',
+    'SoH (%)',
+    'Usable Capacity (kWh)',
+    'Annual Cycles',
+    'Cumulative Cycles',
+  ];
+
+  const rows = projections.map((p) => [
+    p.year,
+    p.baselineCost,
+    p.withBatteryCost,
+    p.annualSavings,
+    p.replacementExpense,
+    p.taxCreditInflow || 0,
+    p.annualLoanPayment,
+    p.netCashFlow,
+    p.cumulativeCashFlow,
+    p.cumulativeNpv,
+    p.sohPercent,
+    p.usableCapacityKwh,
+    p.cyclesThisYear,
+    p.cumulativeCycles,
+  ]);
+
+  return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 }

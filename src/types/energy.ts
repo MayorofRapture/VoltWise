@@ -183,7 +183,35 @@ export interface AnnualSimulationSummary {
   equivalentFullCycles: number;
   maxPeakDemandKw: number;
   
+  // Period & Dataset eligibility flags
+  isSuitableForAnnualProjection?: boolean;
+  periodSavings?: number; // Equivalent to year1Savings for partial period
+  baselinePeriodCost?: number; // Equivalent to baselineAnnualCost for partial period
+  simulatedPeriodCost?: number; // Equivalent to simulatedAnnualCost for partial period
+  durationDays?: number;
+  
   intervalResults: IntervalSimulationResult[];
+}
+
+export interface HorizonFinancialSummary {
+  horizonYears: number;
+  netPresentValue: number; // Cumulative NPV at year `horizon`
+  cumulativeCashFlow: number; // Cumulative cash flow at year `horizon` (authoritative net profit)
+  cumulativeSavings: number; // Sum of annual energy savings across years 1..horizon
+  totalReplacementCost: number; // Replacement expenses incurred within years 1..horizon
+  totalLoanPayments: number; // Loan principal + interest payments incurred within years 1..horizon
+  taxCreditInflows: number; // Deferred tax credit cash inflows realized within years 1..horizon
+  endOfHorizonSohPercent: number; // SoH % at year `horizon`
+  endOfHorizonUsableCapacityKwh: number; // Usable capacity at year `horizon`
+  cumulativeCycles: number; // Total cycles through year `horizon`
+  warrantedCyclesExhausted: boolean; // True if rated cycle life exceeded within years 1..horizon
+  cycleExhaustionYear: number | null; // Year when cycle warranty exceeded (if <= horizon, else null)
+  simplePaybackYears: number | null; // Simple payback if <= horizon, else null
+  discountedPaybackYears: number | null; // Discounted payback if <= horizon, else null
+  horizonRoiPercent: number; // Cumulative net profit / total capital outlay through horizon * 100
+  opportunityCostFutureValue: number; // Compounded alternative value at year `horizon`
+  opportunityCostProfit: number; // Alternative profit at year `horizon`
+  opportunityCostDiff: number; // Battery net profit - opportunity profit at year `horizon`
 }
 
 export interface YearProjection {
@@ -286,10 +314,16 @@ export interface ProfileFinancialAnalysis {
   lifetimeNetProfitWithVoll: number;
   lifetimeRoiWithVollPercent: number;
   
-  // Multi-Year Projections
+  // Multi-Year Projections (25-Year Lifetime Model)
   projections: YearProjection[];
   
-  // Backward compatibility aliases
+  // Explicit Full 25-Year Lifetime Results
+  lifetime25YearNpv: number;
+  lifetime25YearNetProfit: number;
+  lifetime25YearRoiPercent: number;
+  lifetime25YearSavings: number;
+  
+  // Genuine 15-year horizon aliases (derived for the first 15 years)
   projections15Yr: YearProjection[];
   lifetimeTotalSavings15Yr: number;
   lifetimeNetProfit15Yr: number;

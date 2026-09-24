@@ -37,12 +37,21 @@ import {
   ProfileFinancialAnalysis,
   RateTier,
   TouProfile,
+  AnnualSimulationSummary,
 } from '../types/energy';
-import { buildExportLlmJson } from '../utils/exportJson';
+import {
+  buildExportLlmJson,
+  canExportProjectionsJson,
+  canExportProjectionsCsv,
+} from '../utils/exportJson';
+import { deriveHorizonFinancialSummary } from '../utils/simulationEngine';
 
-interface ResultsAnalyticsTabProps {
+export interface ResultsAnalyticsTabProps {
   activeAnalysis: ProfileFinancialAnalysis | null;
   allAnalyses: ProfileFinancialAnalysis[];
+  activeSimulationSummary?: AnnualSimulationSummary | null;
+  allSimulationSummaries?: Record<string, AnnualSimulationSummary>;
+  activeProfile?: BatteryProfile;
   setActiveProfileId: (id: string) => void;
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
@@ -51,8 +60,10 @@ interface ResultsAnalyticsTabProps {
 }
 
 interface ResultsAnalyticsContentProps {
-  activeAnalysis: ProfileFinancialAnalysis;
+  activeAnalysis: ProfileFinancialAnalysis | null;
   allAnalyses: ProfileFinancialAnalysis[];
+  activeSimulationSummary: AnnualSimulationSummary;
+  activeProfile: BatteryProfile;
   setActiveProfileId: (id: string) => void;
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
@@ -63,6 +74,8 @@ interface ResultsAnalyticsContentProps {
 const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   activeAnalysis,
   allAnalyses,
+  activeSimulationSummary,
+  activeProfile,
   setActiveProfileId,
   tiers,
   activeTouProfile,
@@ -70,7 +83,9 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   csvResult,
 }) => {
   const completeness = csvResult?.completeness;
-  const isPartialPeriod = Boolean(completeness && !completeness.isSuitableForAnnualProjection);
+  const isPartialPeriod = Boolean(
+    (completeness && !completeness.isSuitableForAnnualProjection) || !activeAnalysis
+  );
 
   // Chart Controls State
   const [projectionHorizon, setProjectionHorizon] = useState<number>(15); // 1 to 25 years
