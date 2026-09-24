@@ -229,6 +229,10 @@ export function parseAndValidateEnergyCsv(csvText: string): CsvValidationResult 
   // Track daily sums to validate reported Daily Total
   const dayGroupTotals = new Map<string, { reportedDaily: number; calculatedSum: number; count: number }>();
 
+  // Temporal validation trackers
+  const seenTimestamps = new Set<string>();
+  let lastTimestampMs: number | null = null;
+
   for (let i = 1; i < lines.length; i++) {
     const rowNum = i + 1;
     const line = lines[i];
@@ -331,6 +335,28 @@ export function parseAndValidateEnergyCsv(csvText: string): CsvValidationResult 
       );
 
       const normalizedTs = `${parsedDay.year}-${String(parsedDay.month).padStart(2, '0')}-${String(parsedDay.day).padStart(2, '0')} ${String(parsedTime.hour).padStart(2, '0')}:${String(parsedTime.minute).padStart(2, '0')}`;
+      const timeMs = dateObj.getTime();
+
+      // Temporal validation: detect duplicates
+      if (seenTimestamps.has(normalizedTs)) {
+        if (errorCount < maxErrorsToCollect) {
+          errors.push(`Row ${rowNum}: Duplicate timestamp detected: "${normalizedTs}".`);
+        }
+        errorCount++;
+        continue;
+      }
+      seenTimestamps.add(normalizedTs);
+
+      // Temporal validation: detect out-of-order timestamps
+      if (lastTimestampMs !== null && timeMs < lastTimestampMs) {
+        if (errorCount < maxErrorsToCollect) {
+          errors.push(`Row ${rowNum}: Out-of-order timestamp detected. Timestamp "${normalizedTs}" is earlier than previous timestamp.`);
+        }
+        errorCount++;
+        continue;
+      }
+      lastTimestampMs = timeMs;
+
       const dayKey = `${parsedDay.year}-${String(parsedDay.month).padStart(2, '0')}-${String(parsedDay.day).padStart(2, '0')}`;
 
       // Aggregate day validation
@@ -384,6 +410,27 @@ export function parseAndValidateEnergyCsv(csvText: string): CsvValidationResult 
         errorCount++;
         continue;
       }
+
+      const timeMs = parsedDate.getTime();
+      const canonicalKey = rawTs.trim();
+
+      if (seenTimestamps.has(canonicalKey)) {
+        if (errorCount < maxErrorsToCollect) {
+          errors.push(`Row ${rowNum}: Duplicate timestamp detected: "${rawTs}".`);
+        }
+        errorCount++;
+        continue;
+      }
+      seenTimestamps.add(canonicalKey);
+
+      if (lastTimestampMs !== null && timeMs < lastTimestampMs) {
+        if (errorCount < maxErrorsToCollect) {
+          errors.push(`Row ${rowNum}: Out-of-order timestamp detected. Timestamp "${rawTs}" is earlier than previous timestamp.`);
+        }
+        errorCount++;
+        continue;
+      }
+      lastTimestampMs = timeMs;
 
       const usage = Number(rawUsage);
       if (isNaN(usage) || !isFinite(usage) || usage < 0) {
@@ -455,22 +502,133 @@ export function parseAndValidateEnergyCsv(csvText: string): CsvValidationResult 
     }
   }
 
-  // Detect interval duration Δt in hours
+  // Detect interval duration Δt in hours & analyze temporal spacing
   let intervalHours = 1.0;
+  let totalMissingIntervals = 0;
+  let inconsistentIntervalsCount = 0;
+
   if (dataPoints.length >= 2) {
-    const diffMs = dataPoints[1].date.getTime() - dataPoints[0].date.getTime();
-    if (diffMs > 0 && diffMs <= 24 * 3600 * 1000) {
-      intervalHours = diffMs / (3600 * 1000);
+    // Determine most common step interval (mode)
+    const stepCounts = new Map<number, number>();
+    for (let i = 1; i < dataPoints.length; i++) {
+      const diffMs = dataPoints[i].date.getTime() - dataPoints[i - 1].date.getTime();
+      if (diffMs > 0) {
+        stepCounts.set(diffMs, (stepCounts.get(diffMs) || 0) + 1);
+      }
+    }
+
+    let modalStepMs = 3600 * 1000;
+    let maxCount = 0;
+    for (const [stepMs, count] of stepCounts.entries()) {
+      if (count > maxCount) {
+        maxCount = count;
+        modalStepMs = stepMs;
+      }
+    }
+
+    intervalHours = modalStepMs / (3600 * 1000);
+
+    // Analyze gaps and inconsistent spacing
+    for (let i = 1; i < dataPoints.length; i++) {
+      const diffMs = dataPoints[i].date.getTime() - dataPoints[i - 1].date.getTime();
+      const ratio = diffMs / modalStepMs;
+      const nearestMultiple = Math.round(ratio);
+      const remainderMs = Math.abs(diffMs - nearestMultiple * modalStepMs);
+
+      if (remainderMs > 60 * 1000) {
+        inconsistentIntervalsCount++;
+      } else if (nearestMultiple > 1) {
+        const missingInGap = nearestMultiple - 1;
+        totalMissingIntervals += missingInGap;
+        if (diffMs >= 24 * 3600 * 1000 && warnings.length < 5) {
+          const gapHours = Math.round(diffMs / (3600 * 1000));
+          warnings.push(
+            `Significant data gap of ~${gapHours} hours detected between ${dataPoints[i - 1].timestamp} and ${dataPoints[i].timestamp}.`
+          );
+        }
+      }
+    }
+
+    if (inconsistentIntervalsCount > 0) {
+      warnings.push(
+        `Materially inconsistent interval spacing detected across ${inconsistentIntervalsCount} intervals.`
+      );
     }
   }
 
-  // Check dataset length completeness
-  const expected8760 = Math.round(8760 / intervalHours);
-  if (dataPoints.length < 24) {
-    warnings.push(`Dataset contains ${dataPoints.length} intervals. For annual simulation, an 8,760-hour or full-year series is recommended.`);
-  } else if (Math.abs(dataPoints.length - expected8760) > 48) {
-    warnings.push(`Dataset has ${dataPoints.length} intervals (a full 365-day year is approximately ${expected8760} intervals). Calculations simulate over the loaded intervals.`);
+  // Dataset completeness evaluation
+  const firstDate = dataPoints[0]?.date;
+  const lastDate = dataPoints[dataPoints.length - 1]?.date;
+  const modalStepMs = intervalHours * 3600 * 1000;
+
+  let durationDays = 0;
+  let expectedIntervalCount = 0;
+  let isLeapYear = false;
+  let isSuitableForAnnualProjection = false;
+  let unsuitabilityReason: string | undefined = undefined;
+
+  if (firstDate && lastDate) {
+    const totalSpanMs = lastDate.getTime() - firstDate.getTime() + modalStepMs;
+    durationDays = Math.round((totalSpanMs / (24 * 3600 * 1000)) * 10) / 10;
+    expectedIntervalCount = Math.round(totalSpanMs / modalStepMs);
+
+    // Check if the range spans a leap day (Feb 29)
+    for (let y = firstDate.getFullYear(); y <= lastDate.getFullYear(); y++) {
+      const isYearLeap = (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+      if (isYearLeap) {
+        const feb29 = new Date(y, 1, 29, 12, 0, 0);
+        if (feb29 >= firstDate && feb29 <= lastDate) {
+          isLeapYear = true;
+          break;
+        }
+      }
+    }
+
+    const expectedFullYearDays = isLeapYear ? 366 : 365;
+    const expectedAnnualIntervals = Math.round((expectedFullYearDays * 24) / intervalHours);
+
+    // Suitability check for annual financial projection
+    if (durationDays < 360) {
+      isSuitableForAnnualProjection = false;
+      const approxMonths = (durationDays / 30.4).toFixed(1);
+      unsuitabilityReason = `Dataset covers only ${durationDays} days (~${approxMonths} months). Annual financial projections require approximately one full year (~${expectedFullYearDays} days) of continuous data.`;
+      warnings.push(unsuitabilityReason);
+    } else if (durationDays > 370) {
+      isSuitableForAnnualProjection = false;
+      unsuitabilityReason = `Dataset duration is ${durationDays} days, which exceeds a single annual cycle (~${expectedFullYearDays} days).`;
+      warnings.push(unsuitabilityReason);
+    } else if (totalMissingIntervals > expectedAnnualIntervals * 0.05) {
+      isSuitableForAnnualProjection = false;
+      const missingPct = ((totalMissingIntervals / expectedAnnualIntervals) * 100).toFixed(1);
+      unsuitabilityReason = `Dataset has ${totalMissingIntervals} missing intervals (${missingPct}% missing), exceeding the 5% data gap threshold for annual financial projections.`;
+      warnings.push(unsuitabilityReason);
+    } else if (inconsistentIntervalsCount > 50) {
+      isSuitableForAnnualProjection = false;
+      unsuitabilityReason = `Dataset contains materially inconsistent interval spacing (${inconsistentIntervalsCount} irregular intervals).`;
+      warnings.push(unsuitabilityReason);
+    } else {
+      isSuitableForAnnualProjection = true;
+    }
   }
+
+  const completeness: DatasetCompleteness = {
+    startDate: dataPoints[0]?.timestamp || '',
+    endDate: dataPoints[dataPoints.length - 1]?.timestamp || '',
+    intervalCount: dataPoints.length,
+    intervalDurationHours: intervalHours,
+    durationDays,
+    expectedIntervalCount,
+    missingIntervalCount: totalMissingIntervals,
+    isLeapYear,
+    isSuitableForAnnualProjection,
+    reason: unsuitabilityReason,
+    totalIntervals: dataPoints.length,
+    intervalHours,
+    expectedIntervals: expectedIntervalCount,
+    isCompleteYear: isSuitableForAnnualProjection,
+    isAnnualProjectionSuitable: isSuitableForAnnualProjection,
+    unsuitabilityReason,
+  };
 
   const peakKw = intervalHours > 0 ? maxUsageKwh / intervalHours : maxUsageKwh;
 
@@ -487,5 +645,6 @@ export function parseAndValidateEnergyCsv(csvText: string): CsvValidationResult 
     peakKw: Math.round(peakKw * 100) / 100,
     data: dataPoints,
     schemaDetected,
+    completeness,
   };
 }

@@ -418,6 +418,7 @@ export const DEFAULT_BATTERY_PROFILES: BatteryProfile[] = [
     strategy: 'arbitrage',
     chargeTiers: ['super-off-peak', 'off-peak'],
     dischargeTiers: ['on-peak'],
+    allowGridExport: false,
   },
   {
     id: 'enphase-5p',
@@ -433,6 +434,7 @@ export const DEFAULT_BATTERY_PROFILES: BatteryProfile[] = [
     strategy: 'arbitrage',
     chargeTiers: ['super-off-peak'],
     dischargeTiers: ['on-peak'],
+    allowGridExport: false,
   },
   {
     id: 'franklin-wh',
@@ -448,6 +450,7 @@ export const DEFAULT_BATTERY_PROFILES: BatteryProfile[] = [
     strategy: 'arbitrage',
     chargeTiers: ['super-off-peak', 'off-peak'],
     dischargeTiers: ['on-peak', 'mid-peak'],
+    allowGridExport: false,
   },
   {
     id: 'diy-rack-lfp',
@@ -463,12 +466,14 @@ export const DEFAULT_BATTERY_PROFILES: BatteryProfile[] = [
     strategy: 'self_consumption',
     chargeTiers: ['super-off-peak'],
     dischargeTiers: ['on-peak', 'mid-peak'],
+    allowGridExport: false,
   },
 ];
 
 export const DEFAULT_MACRO_FINANCIALS: MacroFinancials = {
-  federalTaxCreditPercent: 30, // 30% US Clean Energy Credit (Section 25D)
-  localRebateFlat: 1000, // SGIP or local electric utility storage rebate
+  federalTaxCreditPercent: 0, // Default 0% (user must explicitly enter applicable incentives)
+  federalTaxCreditRealizationYear: 1, // Default Year 1 realization for tax credit cash flow
+  localRebateFlat: 0, // Default $0 local rebate
   annualElectricityInflationRate: 3.5, // 3.5%
   annualBatteryDegradationRate: 2.0, // 2.0% usable capacity loss/year
   discountRatePercent: 5.0, // 5.0% Discount Rate for NPV
@@ -518,6 +523,8 @@ export function runAnnualSimulation(
   const maxDischargeEnergyInterval = profile.maxContinuousOutputKw * intervalHours;
 
   let currentSocKwh = usableCapacityKwh * 0.5; // Start at 50% state of charge
+  // Track weighted average stored energy cost per kWh for economic export determination
+  let averageStoredCostPerKwh = (defaultTier.buyRate || 0.15) / etaCharge;
   let baselineTotalCost = 0;
   let simulatedTotalCost = 0;
   let totalHomeLoad = 0;
@@ -568,20 +575,30 @@ export function runAnnualSimulation(
     let gridImportKwh = 0;
     let gridExportKwh = 0;
 
-    // Determine operational mode action for this interval
-    const isDesignatedCharge = profile.chargeTiers.includes(tierId) || tier.isChargeWindow;
-    const isDesignatedDischarge = profile.dischargeTiers.includes(tierId) || tier.isDischargeWindow;
+    // Authoritative dispatch configuration:
+    // Only the battery profile's configured chargeTiers and dischargeTiers control charging/discharging.
+    // Tariff defaults (isChargeWindow / isDischargeWindow) must NOT override explicit battery configuration.
+    const isDesignatedCharge = profile.chargeTiers.includes(tierId);
+    const isDesignatedDischarge = profile.dischargeTiers.includes(tierId);
 
     if (profile.strategy === 'arbitrage') {
       // ARBITRAGE MODE:
-      // 1. Charge strictly in lowest-cost designated hours up to usable limit
-      // 2. Discharge during peak hours to offset home load, and export if sell rate > 0
+      // 1. Charge strictly in designated hours up to usable limit
+      // 2. Discharge during peak hours to offset home load
+      // 3. Export only if allowGridExport is true AND sell rate exceeds effective delivery cost (accounting for round-trip efficiency)
       if (isDesignatedCharge && currentSocKwh < usableCapacityKwh) {
         const roomInBattery = usableCapacityKwh - currentSocKwh;
         // Energy that enters battery
         const energyToStore = Math.min(maxChargeEnergyInterval * etaCharge, roomInBattery);
         const gridForBat = energyToStore / etaCharge;
         
+        if (energyToStore > 0) {
+          const costOfNewEnergy = energyToStore * (buyRate / etaCharge);
+          const currentTotalCost = currentSocKwh * averageStoredCostPerKwh;
+          const newTotalEnergy = currentSocKwh + energyToStore;
+          averageStoredCostPerKwh = newTotalEnergy > 0 ? (currentTotalCost + costOfNewEnergy) / newTotalEnergy : 0;
+        }
+
         batChargeKwh = energyToStore;
         currentSocKwh += energyToStore;
         gridImportKwh = loadKwh + gridForBat;
@@ -598,9 +615,14 @@ export function runAnnualSimulation(
         gridImportKwh = remainingHomeLoad;
         batDischargeKwh = dischargeForHome;
 
-        // Arbitrage export opportunity: If battery still has energy and inverter has capacity and sellRate > 0
+        // Grid Export Logic:
+        // When allowGridExport is true: only export if sell rate > effective delivered cost (RTE considered)
+        // When allowGridExport is false: no intentional grid export is permitted
         const remainingInverterCapacity = maxDischargeEnergyInterval - dischargeForHome;
-        if (remainingInverterCapacity > 0.05 && sellRate > 0 && currentSocKwh > 0.1) {
+        const effectiveDeliveryCost = averageStoredCostPerKwh / etaDischarge;
+        const isExportEconomic = sellRate > effectiveDeliveryCost;
+
+        if (profile.allowGridExport && isExportEconomic && remainingInverterCapacity > 0.05 && currentSocKwh > 0.1) {
           const exportDeliverable = Math.min(remainingInverterCapacity, currentSocKwh * etaDischarge);
           const batteryDrainedExport = exportDeliverable / etaDischarge;
           currentSocKwh = Math.max(0, currentSocKwh - batteryDrainedExport);
@@ -621,6 +643,13 @@ export function runAnnualSimulation(
         const energyToStore = Math.min(maxChargeEnergyInterval * etaCharge, roomInBattery);
         const gridForBat = energyToStore / etaCharge;
         
+        if (energyToStore > 0) {
+          const costOfNewEnergy = energyToStore * (buyRate / etaCharge);
+          const currentTotalCost = currentSocKwh * averageStoredCostPerKwh;
+          const newTotalEnergy = currentSocKwh + energyToStore;
+          averageStoredCostPerKwh = newTotalEnergy > 0 ? (currentTotalCost + costOfNewEnergy) / newTotalEnergy : 0;
+        }
+
         batChargeKwh = energyToStore;
         currentSocKwh += energyToStore;
         gridImportKwh = loadKwh + gridForBat;
@@ -770,23 +799,32 @@ export function calculate15YearFinancials(
 ): ProfileFinancialAnalysis {
   const grossCost = profile.installedCost;
   
-  // 1. Upfront Incentives & Net Capital
-  const taxCreditAmount = grossCost * (Math.max(0, financials.federalTaxCreditPercent) / 100);
+  // 1. Upfront Incentives vs Deferred Tax Credits
+  // Immediate point-of-sale rebates reduce upfront out-of-pocket / financing basis.
+  // Federal tax credits are realized in a subsequent year (default Year 1) as cash-flow inflows.
   const flatRebate = Math.max(0, financials.localRebateFlat);
-  const totalIncentives = Math.min(grossCost, taxCreditAmount + flatRebate);
+  const immediateRebates = Math.min(grossCost, flatRebate);
+  const upfrontNetCost = Math.max(0, grossCost - immediateRebates);
+
+  const taxCreditPercent = Math.max(0, financials.federalTaxCreditPercent);
+  const taxCreditAmount = grossCost * (taxCreditPercent / 100);
+  const taxCreditRealizationYear = Math.max(1, financials.federalTaxCreditRealizationYear ?? 1);
+  const totalIncentives = Math.min(grossCost, immediateRebates + taxCreditAmount);
   const netInstalledCost = Math.max(0, grossCost - totalIncentives);
 
   // 2. Financing & Clean Energy Loan Amortization
+  // Loan principal is based on upfront capital needed (upfrontNetCost - down payment).
+  // The deferred tax credit does NOT automatically reduce loan principal.
   let loanPrincipal = 0;
   let monthlyLoanPayment = 0;
-  let upfrontOutOfPocket = netInstalledCost;
+  let upfrontOutOfPocket = upfrontNetCost; // For cash purchase, pay upfrontNetCost at Year 0
   let totalLoanPaymentLifetime = 0;
   let totalLoanInterestPaid = 0;
 
   if (financials.isFinanced) {
     const downPaymentRatio = Math.max(0, Math.min(1.0, financials.loanDownPaymentPercent / 100));
-    const downPaymentAmount = netInstalledCost * downPaymentRatio;
-    loanPrincipal = Math.max(0, netInstalledCost - downPaymentAmount);
+    const downPaymentAmount = upfrontNetCost * downPaymentRatio;
+    loanPrincipal = Math.max(0, upfrontNetCost - downPaymentAmount);
     upfrontOutOfPocket = downPaymentAmount;
 
     const monthlyRate = (Math.max(0, financials.loanAprPercent) / 100) / 12;
@@ -863,8 +901,11 @@ export function calculate15YearFinancials(
       ? monthlyLoanPayment * 12
       : 0;
 
-    // Net Cash Flow for the year
-    const netCashFlow = annualSavings - replacementExpense - annualLoanPayment;
+    // Tax credit cash inflow realized in configured realization year (default Year 1)
+    const taxCreditInflow = (y === taxCreditRealizationYear) ? taxCreditAmount : 0;
+
+    // Net Cash Flow for the year: includes operational savings, tax credit inflow, replacement and loan payments
+    const netCashFlow = annualSavings - replacementExpense - annualLoanPayment + taxCreditInflow;
     cashFlowsForIrr.push(netCashFlow);
 
     // Opportunity Cost compound benchmark
@@ -912,6 +953,7 @@ export function calculate15YearFinancials(
       baselineCost: Math.round(baselineCost),
       withBatteryCost: Math.round(withBatteryCost),
       annualSavings: Math.round(annualSavings),
+      taxCreditInflow: Math.round(taxCreditInflow),
       replacementExpense: Math.round(replacementExpense),
       annualLoanPayment: Math.round(annualLoanPayment),
       netCashFlow: Math.round(netCashFlow),
@@ -947,7 +989,7 @@ export function calculate15YearFinancials(
 
   // 6. Net Profit & Lifetime ROI
   const totalCapitalOutlay = upfrontOutOfPocket + (financials.isFinanced ? totalLoanPaymentLifetime : 0) + (replacementEnabled ? replacementCost : 0);
-  const lifetimeNetProfit = lifetimeSavingsTotal - totalCapitalOutlay;
+  const lifetimeNetProfit = lifetimeSavingsTotal + taxCreditAmount - totalCapitalOutlay;
   const lifetimeRoiPercent = totalCapitalOutlay > 0
     ? (lifetimeNetProfit / totalCapitalOutlay) * 100
     : 0;

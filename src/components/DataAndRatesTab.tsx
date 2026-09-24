@@ -26,7 +26,16 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { CsvValidationResult, RateTier, TouProfile, TouSeason } from '../types/energy';
+import {
+  CsvValidationResult,
+  RateTier,
+  TouProfile,
+  TouSeason,
+  UI_DAY_NAMES,
+  uiRowIndexToDayOfWeek,
+  dayOfWeekToUiRowIndex,
+  isWeekendDay,
+} from '../types/energy';
 import { DEFAULT_TOU_PROFILES, ScheduleMatrix } from '../utils/simulationEngine';
 import { generateStandardCsvTemplate } from '../utils/sampleData';
 
@@ -44,7 +53,6 @@ interface DataAndRatesTabProps {
   setScheduleMatrix: React.Dispatch<React.SetStateAction<ScheduleMatrix>>;
 }
 
-const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -192,9 +200,9 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
     }
   };
 
-  const handleCellPaint = (dayIdx: number, hour: number) => {
+  const handleCellPaint = (canonicalDow: number, hour: number) => {
     const nextMatrix = scheduleMatrix.map((row, d) =>
-      d === dayIdx
+      d === canonicalDow
         ? row.map((cell, h) => (h === hour ? activeTierId : cell))
         : [...row]
     );
@@ -209,15 +217,15 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
     );
   };
 
-  const handleMouseDownCell = (dayIdx: number, hour: number) => {
+  const handleMouseDownCell = (canonicalDow: number, hour: number) => {
     setIsMouseDown(true);
-    handleCellPaint(dayIdx, hour);
+    handleCellPaint(canonicalDow, hour);
   };
 
-  const handleMouseEnterCell = (dayIdx: number, hour: number) => {
-    setDragOverCell({ day: dayIdx, hour });
+  const handleMouseEnterCell = (canonicalDow: number, hour: number) => {
+    setDragOverCell({ day: canonicalDow, hour });
     if (isMouseDown) {
-      handleCellPaint(dayIdx, hour);
+      handleCellPaint(canonicalDow, hour);
     }
   };
 
@@ -325,15 +333,15 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
     );
   };
 
-  // Bulk paint shortcuts
+  // Bulk paint shortcuts - operating on canonical day-of-week indices (0=Sun, 1=Mon, ..., 6=Sat)
   const applyBulkSchedule = (
     mode: 'weekdays-peak' | 'all-super-offpeak-night' | 'reset-california' | 'fill-active'
   ) => {
     const nextMatrix: ScheduleMatrix = [];
 
-    for (let day = 0; day < 7; day++) {
+    for (let dow = 0; dow < 7; dow++) {
       const row: string[] = [];
-      const isWeekend = day === 5 || day === 6;
+      const isWeekend = isWeekendDay(dow);
 
       for (let hour = 0; hour < 24; hour++) {
         if (mode === 'fill-active') {
@@ -342,13 +350,13 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
           if (!isWeekend && hour >= 16 && hour < 21) {
             row.push(activeTierId);
           } else {
-            row.push(scheduleMatrix[day]?.[hour] || activeTierId);
+            row.push(scheduleMatrix[dow]?.[hour] || activeTierId);
           }
         } else if (mode === 'all-super-offpeak-night') {
           if (hour >= 0 && hour < 6) {
             row.push(activeTierId);
           } else {
-            row.push(scheduleMatrix[day]?.[hour] || activeTierId);
+            row.push(scheduleMatrix[dow]?.[hour] || activeTierId);
           }
         } else if (mode === 'reset-california') {
           const superOff = tiers.find((t) => t.id.includes('super'))?.id || tiers[0].id;
@@ -416,9 +424,9 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
     ];
 
     const newMatrix: ScheduleMatrix = [];
-    for (let day = 0; day < 7; day++) {
+    for (let dow = 0; dow < 7; dow++) {
       const row: string[] = [];
-      const isWeekend = day === 5 || day === 6;
+      const isWeekend = isWeekendDay(dow);
       for (let hour = 0; hour < 24; hour++) {
         if (!isWeekend && hour >= 16 && hour < 21) {
           row.push('on-peak');
@@ -1823,50 +1831,53 @@ export const DataAndRatesTab: React.FC<DataAndRatesTabProps> = ({
                 ))}
               </div>
 
-              {/* Day rows (Mon to Sun) */}
+              {/* Day rows (Mon to Sun UI presentation, translating to canonical 0=Sun..6=Sat) */}
               <div className="space-y-1.5">
-                {DAY_NAMES.map((dayName, dayIdx) => (
-                  <div
-                    key={dayIdx}
-                    className="gap-1 items-center"
-                    style={{ display: 'grid', gridTemplateColumns: '100px repeat(24, minmax(0, 1fr))' }}
-                  >
-                    <span className="text-xs font-semibold text-slate-300 truncate pl-1">
-                      {dayName}
-                    </span>
-                    {Array.from({ length: 24 }).map((_, hour) => {
-                      const tierId = scheduleMatrix[dayIdx]?.[hour] || tiers[0]?.id;
-                      const cellTier = tiers.find((t) => t.id === tierId) || tiers[0];
-                      const isHovered = dragOverCell?.day === dayIdx && dragOverCell?.hour === hour;
+                {UI_DAY_NAMES.map((dayName, uiRowIdx) => {
+                  const canonicalDow = uiRowIndexToDayOfWeek(uiRowIdx);
+                  return (
+                    <div
+                      key={canonicalDow}
+                      className="gap-1 items-center"
+                      style={{ display: 'grid', gridTemplateColumns: '100px repeat(24, minmax(0, 1fr))' }}
+                    >
+                      <span className="text-xs font-semibold text-slate-300 truncate pl-1">
+                        {dayName}
+                      </span>
+                      {Array.from({ length: 24 }).map((_, hour) => {
+                        const tierId = scheduleMatrix[canonicalDow]?.[hour] || tiers[0]?.id;
+                        const cellTier = tiers.find((t) => t.id === tierId) || tiers[0];
+                        const isHovered = dragOverCell?.day === canonicalDow && dragOverCell?.hour === hour;
 
-                      const seasonalRate =
-                        matrixPreviewSeason?.tierRates?.[cellTier.id] || {
-                          buyRate: cellTier.buyRate,
-                          sellRate: cellTier.sellRate,
-                        };
+                        const seasonalRate =
+                          matrixPreviewSeason?.tierRates?.[cellTier.id] || {
+                            buyRate: cellTier.buyRate,
+                            sellRate: cellTier.sellRate,
+                          };
 
-                      return (
-                        <button
-                          key={hour}
-                          type="button"
-                          onMouseDown={() => handleMouseDownCell(dayIdx, hour)}
-                          onMouseEnter={() => handleMouseEnterCell(dayIdx, hour)}
-                          title={`${dayName} ${hour}:00 - ${cellTier.name}\n${matrixPreviewSeason.name} Rates:\nBuy: $${seasonalRate.buyRate.toFixed(2)}/kWh\nSell: $${seasonalRate.sellRate.toFixed(2)}/kWh`}
-                          className="h-7 rounded transition-transform hover:scale-105 active:scale-95 focus:outline-none flex items-center justify-center text-[10px] font-mono font-medium shadow-xs"
-                          style={{
-                            backgroundColor: cellTier.color,
-                            opacity: isHovered ? 0.95 : 0.82,
-                            color: '#0f172a',
-                          }}
-                        >
-                          <span className="opacity-0 hover:opacity-100 text-[9px] font-bold">
-                            {hour}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+                        return (
+                          <button
+                            key={hour}
+                            type="button"
+                            onMouseDown={() => handleMouseDownCell(canonicalDow, hour)}
+                            onMouseEnter={() => handleMouseEnterCell(canonicalDow, hour)}
+                            title={`${dayName} ${hour}:00 - ${cellTier.name}\n${matrixPreviewSeason.name} Rates:\nBuy: $${seasonalRate.buyRate.toFixed(2)}/kWh\nSell: $${seasonalRate.sellRate.toFixed(2)}/kWh`}
+                            className="h-7 rounded transition-transform hover:scale-105 active:scale-95 focus:outline-none flex items-center justify-center text-[10px] font-mono font-medium shadow-xs"
+                            style={{
+                              backgroundColor: cellTier.color,
+                              opacity: isHovered ? 0.95 : 0.82,
+                              color: '#0f172a',
+                            }}
+                          >
+                            <span className="opacity-0 hover:opacity-100 text-[9px] font-bold">
+                              {hour}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

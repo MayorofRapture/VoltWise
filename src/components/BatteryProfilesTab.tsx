@@ -78,6 +78,7 @@ export const BatteryProfilesTab: React.FC<BatteryProfilesTabProps> = ({
       strategy: 'arbitrage',
       chargeTiers: tiers.filter((t) => t.isChargeWindow).map((t) => t.id),
       dischargeTiers: tiers.filter((t) => t.isDischargeWindow).map((t) => t.id),
+      allowGridExport: false,
     };
     setProfiles([...profiles, newProfile]);
     setActiveProfileId(newId);
@@ -89,6 +90,7 @@ export const BatteryProfilesTab: React.FC<BatteryProfilesTabProps> = ({
       ...currentProfile,
       id: newId,
       name: `${currentProfile.name} (Copy)`,
+      allowGridExport: currentProfile.allowGridExport ?? false,
     };
     setProfiles([...profiles, duplicated]);
     setActiveProfileId(newId);
@@ -512,6 +514,46 @@ export const BatteryProfilesTab: React.FC<BatteryProfilesTabProps> = ({
                     </label>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            {/* Authoritative Dispatch Notice */}
+            <p className="text-[11px] text-slate-400 italic">
+              Note: The tier selections above are authoritative. The battery will only charge or discharge in these selected tiers, overriding any default tariff tier flags.
+            </p>
+
+            {/* Grid Export Control */}
+            <div className="bg-slate-950/70 rounded-xl p-3.5 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-xs font-semibold text-slate-200 block">
+                    Permit Grid Energy Export
+                  </label>
+                  <span className="text-[11px] text-slate-400">
+                    When enabled, excess discharged battery power can be exported to the grid if the utility sell rate exceeds the battery stored energy cost (accounting for round-trip efficiency).
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleUpdateCurrent('allowGridExport', !currentProfile.allowGridExport)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    currentProfile.allowGridExport ? 'bg-emerald-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      currentProfile.allowGridExport ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="text-[11px]">
+                Status:{' '}
+                <span className={currentProfile.allowGridExport ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                  {currentProfile.allowGridExport
+                    ? 'Export Allowed (Discharges to grid when sell rate exceeds stored acquisition cost)'
+                    : 'Export Prohibited (Battery discharges strictly to serve home load)'}
+                </span>
               </div>
             </div>
           </div>

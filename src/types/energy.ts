@@ -2,6 +2,52 @@
  * Core Type Definitions for VoltWise Energy Simulation Engine
  */
 
+/**
+ * Canonical Day of Week Representation:
+ * Matches standard JavaScript Date.getDay() semantics:
+ * 0 = Sunday, 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday.
+ * 
+ * For user-facing presentation, the UI displays Monday through Sunday (UI_DAY_ORDER).
+ */
+export const CANONICAL_DAYS = [
+  { dayOfWeek: 0, name: 'Sunday', shortName: 'Sun', isWeekend: true },
+  { dayOfWeek: 1, name: 'Monday', shortName: 'Mon', isWeekend: false },
+  { dayOfWeek: 2, name: 'Tuesday', shortName: 'Tue', isWeekend: false },
+  { dayOfWeek: 3, name: 'Wednesday', shortName: 'Wed', isWeekend: false },
+  { dayOfWeek: 4, name: 'Thursday', shortName: 'Thu', isWeekend: false },
+  { dayOfWeek: 5, name: 'Friday', shortName: 'Fri', isWeekend: false },
+  { dayOfWeek: 6, name: 'Saturday', shortName: 'Sat', isWeekend: true },
+] as const;
+
+/** User-facing display row ordering: Monday (1) through Sunday (0) */
+export const UI_DAY_ORDER: readonly number[] = [1, 2, 3, 4, 5, 6, 0];
+
+export const UI_DAY_NAMES: readonly string[] = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
+
+/** Translates UI row index (0=Monday .. 6=Sunday) to canonical dayOfWeek (0=Sun .. 6=Sat) */
+export function uiRowIndexToDayOfWeek(uiRowIndex: number): number {
+  return UI_DAY_ORDER[uiRowIndex] ?? 1;
+}
+
+/** Translates canonical dayOfWeek (0=Sun .. 6=Sat) to UI row index (0=Monday .. 6=Sunday) */
+export function dayOfWeekToUiRowIndex(dayOfWeek: number): number {
+  const idx = UI_DAY_ORDER.indexOf(dayOfWeek);
+  return idx >= 0 ? idx : 0;
+}
+
+/** Determines if a canonical day of week is a weekend (Saturday or Sunday) */
+export function isWeekendDay(dayOfWeek: number): boolean {
+  return dayOfWeek === 0 || dayOfWeek === 6;
+}
+
 export type OperationalStrategy = 'arbitrage' | 'self_consumption';
 
 export interface RateTier {
@@ -45,12 +91,14 @@ export interface BatteryProfile {
   strategy: OperationalStrategy;
   chargeTiers: string[]; // Tier IDs to charge in
   dischargeTiers: string[]; // Tier IDs to discharge in
+  allowGridExport?: boolean; // When true, battery may export excess stored energy to grid during peak hours if profitable
 }
 
 export interface MacroFinancials {
-  // Upfront Capital & Incentives
-  federalTaxCreditPercent: number; // e.g. 30% US Clean Energy Credit (Section 25D)
-  localRebateFlat: number; // e.g. $1,000 flat rebate (SGIP, utility grant)
+  // Upfront Capital & Incentives (User-provided assumptions)
+  federalTaxCreditPercent: number; // e.g. User-provided % (default 0%)
+  federalTaxCreditRealizationYear?: number; // Year tax credit is realized as cash flow (default Year 1)
+  localRebateFlat: number; // e.g. Flat rebate/grant (default $0)
   
   // Escalation & Degradation
   annualElectricityInflationRate: number; // e.g. 3.5%
@@ -147,9 +195,10 @@ export interface YearProjection {
   annualSavings: number;
   
   // Cash Flow & Capital Outlays
+  taxCreditInflow?: number; // Federal tax credit cash inflow realized in target year
   replacementExpense: number; // Inverter replacement in target year
   annualLoanPayment: number; // Debt service if financed
-  netCashFlow: number; // annualSavings - replacementExpense - annualLoanPayment
+  netCashFlow: number; // annualSavings - replacementExpense - annualLoanPayment + taxCreditInflow
   cumulativeCashFlow: number; // cumulative sum starting from -upfrontCapital
   cumulativeBaselineSpend: number; // cumulative electricity spend with NO battery
   cumulativeBatterySpend: number; // upfrontCapital + cumulative withBatteryCost + maintenance
@@ -247,6 +296,26 @@ export interface ProfileFinancialAnalysis {
   npv15Yr: number;
 }
 
+export interface DatasetCompleteness {
+  startDate: string;
+  endDate: string;
+  intervalCount: number;
+  intervalDurationHours: number;
+  durationDays: number;
+  expectedIntervalCount: number;
+  missingIntervalCount: number;
+  isLeapYear: boolean;
+  isSuitableForAnnualProjection: boolean;
+  reason?: string;
+  // Compatibility aliases
+  totalIntervals?: number;
+  intervalHours?: number;
+  expectedIntervals?: number;
+  isCompleteYear?: boolean;
+  isAnnualProjectionSuitable?: boolean;
+  unsuitabilityReason?: string;
+}
+
 export interface CsvValidationResult {
   isValid: boolean;
   errors: string[];
@@ -260,4 +329,5 @@ export interface CsvValidationResult {
   peakKw: number;
   data: IntervalDataPoint[];
   schemaDetected?: 'standard_5col' | 'legacy_2col';
+  completeness?: DatasetCompleteness;
 }

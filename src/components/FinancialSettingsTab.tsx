@@ -34,15 +34,20 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
   };
 
   const grossCost = activeProfile.installedCost;
+  const flatRebate = Math.max(0, financials.localRebateFlat);
+  const immediateRebates = Math.min(grossCost, flatRebate);
+  const upfrontNetCost = Math.max(0, grossCost - immediateRebates);
   const taxCreditDollars = Math.round(grossCost * (Math.max(0, financials.federalTaxCreditPercent) / 100));
-  const totalIncentives = Math.min(grossCost, taxCreditDollars + financials.localRebateFlat);
-  const netUpfrontCost = Math.max(0, grossCost - totalIncentives);
+  const totalIncentives = Math.min(grossCost, immediateRebates + taxCreditDollars);
+  const netInstalledCost = Math.max(0, grossCost - totalIncentives);
 
-  // Financing calculation for preview
+  // Financing calculation for preview:
+  // Loan principal is based on upfront capital needed (upfrontNetCost - downPayment).
+  // The deferred tax credit arrives as a future cash flow in Year 1+ and does not reduce loan principal.
   const downPaymentAmount = financials.isFinanced
-    ? Math.round(netUpfrontCost * (financials.loanDownPaymentPercent / 100))
-    : netUpfrontCost;
-  const loanPrincipal = financials.isFinanced ? Math.max(0, netUpfrontCost - downPaymentAmount) : 0;
+    ? Math.round(upfrontNetCost * (financials.loanDownPaymentPercent / 100))
+    : upfrontNetCost;
+  const loanPrincipal = financials.isFinanced ? Math.max(0, upfrontNetCost - downPaymentAmount) : 0;
   const monthlyRate = (financials.loanAprPercent / 100) / 12;
   const numMonths = financials.loanTermYears * 12;
   const monthlyLoanPayment = financials.isFinanced && loanPrincipal > 0
@@ -67,8 +72,8 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
   // Opportunity cost compound calculation preview
   const oppYears = 15;
   const oppRate = financials.opportunityCostRatePercent / 100;
-  const oppFutureVal = Math.round(netUpfrontCost * Math.pow(1 + oppRate, oppYears));
-  const oppProfit = oppFutureVal - netUpfrontCost;
+  const oppFutureVal = Math.round(upfrontNetCost * Math.pow(1 + oppRate, oppYears));
+  const oppProfit = oppFutureVal - upfrontNetCost;
 
   return (
     <div className="space-y-8">
@@ -106,7 +111,7 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
                   Federal Clean Energy Tax Credit (ITC)
                 </label>
                 <span className="text-[11px] text-slate-400">
-                  e.g., US Inflation Reduction Act Section 25D (30%)
+                  User-specified percentage (defaults to 0%; e.g., 30% if eligible)
                 </span>
               </div>
               <span className="text-sm font-bold text-emerald-400 font-mono tabular-nums">
@@ -130,6 +135,18 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
                 -${taxCreditDollars.toLocaleString()}
               </span>
             </div>
+
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/80">
+              <span className="text-slate-400">Cash Flow Realization:</span>
+              <select
+                value={financials.federalTaxCreditRealizationYear ?? 1}
+                onChange={(e) => handleUpdate('federalTaxCreditRealizationYear', parseInt(e.target.value, 10) || 1)}
+                className="bg-slate-900 border border-slate-800 rounded px-2 py-0.5 text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+              >
+                <option value={1}>Year 1 (Next tax filing)</option>
+                <option value={2}>Year 2</option>
+              </select>
+            </div>
           </div>
 
           {/* Flat Local / Utility Rebate */}
@@ -140,7 +157,7 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
                   State / Utility Flat Cash Rebate
                 </label>
                 <span className="text-[11px] text-slate-400">
-                  e.g., California SGIP, NY-Sun, or direct utility cash grants
+                  e.g., California SGIP or direct utility grant (defaults to $0)
                 </span>
               </div>
               <span className="text-sm font-bold text-cyan-400 font-mono tabular-nums">
@@ -170,34 +187,41 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
         {/* Calculation Bridge Breakdown */}
         <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-3">
-            Net Upfront Capital Investment Reconciliation ({activeProfile.name})
+            Capital Investment & Incentive Reconciliation ({activeProfile.name})
           </span>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs font-mono">
             <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 block font-sans">Gross Installed Cost</span>
+              <span className="text-[10px] text-slate-400 block font-sans">Gross Installed</span>
               <span className="text-sm font-bold text-slate-200 tabular-nums">
                 ${grossCost.toLocaleString()}
               </span>
             </div>
 
             <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 block font-sans">Federal Tax Credit</span>
+              <span className="text-[10px] text-slate-400 block font-sans">Point-of-Sale Rebate</span>
+              <span className="text-sm font-bold text-cyan-400 tabular-nums">
+                -${immediateRebates.toLocaleString()}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+              <span className="text-[10px] text-slate-400 block font-sans">Upfront Net Outlay</span>
+              <span className="text-sm font-bold text-slate-100 tabular-nums">
+                ${upfrontNetCost.toLocaleString()}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+              <span className="text-[10px] text-slate-400 block font-sans">Tax Credit (Yr {financials.federalTaxCreditRealizationYear ?? 1})</span>
               <span className="text-sm font-bold text-emerald-400 tabular-nums">
                 -${taxCreditDollars.toLocaleString()}
               </span>
             </div>
 
-            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 block font-sans">Local Rebate</span>
-              <span className="text-sm font-bold text-cyan-400 tabular-nums">
-                -${financials.localRebateFlat.toLocaleString()}
-              </span>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40">
+            <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 col-span-2 sm:col-span-1">
               <span className="text-[10px] text-emerald-300 block font-sans font-bold">Net Installed Cost</span>
               <span className="text-sm font-bold text-emerald-300 tabular-nums">
-                ${netUpfrontCost.toLocaleString()}
+                ${netInstalledCost.toLocaleString()}
               </span>
             </div>
           </div>
@@ -319,7 +343,7 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
             </div>
 
             {/* Loan Amortization Preview Card */}
-            <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-xl p-4">
+            <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-xl p-4 space-y-2">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
                 <div>
                   <span className="text-[10px] text-slate-400 block font-sans">Financed Principal</span>
@@ -346,11 +370,16 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
                   </span>
                 </div>
               </div>
+              {taxCreditDollars > 0 && (
+                <div className="text-[11px] text-indigo-300/80 pt-1.5 border-t border-indigo-900/50 font-sans">
+                  Note: Federal tax credit of ${taxCreditDollars.toLocaleString()} is realized in Year {financials.federalTaxCreditRealizationYear ?? 1} cash flow and does not reduce loan principal.
+                </div>
+              )}
             </div>
           </div>
         ) : (
           <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/80 text-xs text-slate-400 flex items-center justify-between">
-            <span>System is evaluated as a 100% upfront cash purchase (${netUpfrontCost.toLocaleString()} net investment).</span>
+            <span>System is evaluated as a 100% upfront cash purchase (${upfrontNetCost.toLocaleString()} initial outlay before deferred tax credits).</span>
             <span className="text-emerald-400 font-semibold font-mono">Zero Debt Service / No Interest</span>
           </div>
         )}
