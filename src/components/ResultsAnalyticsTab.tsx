@@ -197,7 +197,6 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   // Generate multi-year crossover chart points (Annual vs Monthly)
   const chartPoints = useMemo(() => {
     if (!hasFinancialAnalysis || !activeAnalysis) return [];
-    const oppRate = (activeAnalysis.opportunityCostRate || 4.5) / 100;
     const initialBase = activeAnalysis.upfrontOutOfPocket;
     const replacementEnabled = activeAnalysis.replacementEnabled;
     const replacementYear = activeAnalysis.replacementYear;
@@ -221,7 +220,8 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       ];
 
       horizonProjections.forEach((p: YearProjection, idx: number) => {
-        const oppVal = Math.round(initialBase * Math.pow(1 + oppRate, p.year));
+        // Authoritative annual opportunity-cost benchmark from YearProjection
+        const oppVal = Math.round(p.opportunityCostValue);
         pts.push({
           index: idx + 1,
           timeFraction: p.year,
@@ -274,7 +274,12 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         const baselineSpend = Math.round(prevBaseline + monthlyBaseline * monthInYear);
         const batterySpend = Math.round(prevBattery + monthlyWithBattery * monthInYear);
         const netCashFlow = Math.round(baselineSpend - batterySpend);
-        const oppVal = Math.round(initialBase * Math.pow(1 + oppRate, m / 12));
+
+        // Visual monthly interpolation between authoritative annual year-end opportunity cost endpoints.
+        // For Year 1, previous year-end is initial upfront out-of-pocket (Year 0).
+        const prevYearOpp = y > 1 ? horizonProjections[y - 2].opportunityCostValue : initialBase;
+        const currYearOpp = p.opportunityCostValue;
+        const oppVal = Math.round(prevYearOpp + (currYearOpp - prevYearOpp) * (monthInYear / 12));
 
         pts.push({
           index: m,
@@ -1052,7 +1057,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               <span className="text-[10px] font-mono text-slate-400">{activeAnalysis.opportunityCostRate}%</span>
             </div>
             <p className="text-[11px] text-slate-400">
-              Compounding upfront capital in {activeAnalysis.opportunityCostVehicleName} over 25 years:
+              Investing committed cash outlays in {activeAnalysis.opportunityCostVehicleName} over 25 years:
             </p>
             <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
               <div className="flex justify-between">
@@ -1459,7 +1464,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                     <span>Alternative Market Benchmark</span>
                   </div>
                   <span className="text-[10px] text-slate-400 block mt-0.5">
-                    Upfront capital compounded in {opportunityCostVehicleName}
+                    Committed cash outlays invested in {opportunityCostVehicleName}
                   </span>
                 </div>
               </label>

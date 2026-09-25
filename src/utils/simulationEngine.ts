@@ -16,6 +16,19 @@ import {
   DatasetCompleteness,
   PartialPeriodDisplayMetrics,
 } from '../types/energy';
+import {
+  calculateOpportunityCostBenchmark,
+  OpportunityCostBenchmarkInput,
+  OpportunityCostBenchmarkResult,
+  OpportunityCostYear,
+} from './opportunityCost';
+
+export {
+  calculateOpportunityCostBenchmark,
+  type OpportunityCostBenchmarkInput,
+  type OpportunityCostBenchmarkResult,
+  type OpportunityCostYear,
+};
 
 /**
  * 7 Days (0=Sun, 1=Mon, ..., 6=Sat) x 24 Hours schedule lookup
@@ -880,6 +893,7 @@ export function calculate15YearFinancials(
       } else {
         monthlyLoanPayment = loanPrincipal / numMonths;
       }
+      monthlyLoanPayment = Math.round(monthlyLoanPayment * 100) / 100;
       totalLoanPaymentLifetime = monthlyLoanPayment * numMonths;
       totalLoanInterestPaid = Math.max(0, totalLoanPaymentLifetime - loanPrincipal);
     }
@@ -893,12 +907,27 @@ export function calculate15YearFinancials(
   const inflationRate = financials.annualElectricityInflationRate / 100;
   const degradationRate = financials.annualBatteryDegradationRate / 100;
   const discountRate = (financials.discountRatePercent || 5.0) / 100;
-  const opportunityRate = (financials.opportunityCostRatePercent || 4.5) / 100;
+
+  const replacementEnabled = financials.replacementEnabled;
+  const replacementCost = replacementEnabled ? Math.max(0, financials.replacementCost) : 0;
+  const replacementYear = replacementEnabled ? Math.max(1, financials.replacementYear) : 0;
+
+  // Authoritative opportunity-cost benchmark for full 25-year lifecycle
+  const opportunityBenchmark = calculateOpportunityCostBenchmark({
+    horizonYears: 25,
+    annualRatePercent: financials.opportunityCostRatePercent ?? 4.5,
+    upfrontContribution: upfrontOutOfPocket,
+    monthlyLoanPayment,
+    loanTermYears: financials.isFinanced ? financials.loanTermYears : 0,
+    replacementEnabled,
+    replacementCost,
+    replacementYear,
+  });
 
   // 4. Multi-Year Iteration Loop (Years 1 to 25)
   const projections: YearProjection[] = [];
   const cashFlowsForIrr: number[] = [-upfrontOutOfPocket];
-  
+
   let cumulativeCashFlow = -upfrontOutOfPocket;
   let cumulativeBaselineSpend = 0;
   let cumulativeBatterySpend = upfrontOutOfPocket;
@@ -918,14 +947,10 @@ export function calculate15YearFinancials(
   const annualDischargedYear1 = annualSummary.annualBatteryDischargedKwh;
   const annualVollValue = financials.annualOutageDays * financials.valueOfLostLoadPerDay;
 
-  const replacementEnabled = financials.replacementEnabled;
-  const replacementCost = replacementEnabled ? Math.max(0, financials.replacementCost) : 0;
-  const replacementYear = replacementEnabled ? Math.max(1, financials.replacementYear) : 0;
-
   for (let y = 1; y <= 25; y++) {
     // Inflation factor escalates electricity prices
     const inflationFactor = Math.pow(1 + inflationRate, y - 1);
-    
+
     // Electrochemical degradation (floor at 35% capacity retention)
     const capacityRetentionFactor = Math.max(0.35, 1 - (y - 1) * degradationRate);
     const usableCapacityKwh = initialUsableCapacity * capacityRetentionFactor;
@@ -952,8 +977,8 @@ export function calculate15YearFinancials(
     const netCashFlow = annualSavings - replacementExpense - annualLoanPayment + taxCreditInflow;
     cashFlowsForIrr.push(netCashFlow);
 
-    // Opportunity Cost compound benchmark
-    const opportunityCostValue = Math.round(upfrontOutOfPocket * Math.pow(1 + opportunityRate, y));
+    // Opportunity Cost compound benchmark from authoritative helper
+    const opportunityCostValue = opportunityBenchmark.yearly[y - 1].futureValue;
 
     // Cumulative tracking
     const prevCumulative = cumulativeCashFlow;
@@ -1033,7 +1058,7 @@ export function calculate15YearFinancials(
 
   // 6. Net Profit & Lifetime ROI
   const totalCapitalOutlay = upfrontOutOfPocket + (financials.isFinanced ? totalLoanPaymentLifetime : 0) + (replacementEnabled ? replacementCost : 0);
-  const lifetimeNetProfit = lifetimeSavingsTotal + taxCreditAmount - totalCapitalOutlay;
+  const lifetimeNetProfit = Math.round(lifetimeSavingsTotal + taxCreditAmount - totalCapitalOutlay);
   const lifetimeRoiPercent = totalCapitalOutlay > 0
     ? (lifetimeNetProfit / totalCapitalOutlay) * 100
     : 0;
@@ -1051,8 +1076,8 @@ export function calculate15YearFinancials(
   } else if (financials.opportunityCostVehicle === 'custom') {
     opportunityCostVehicleName = `Custom Asset (${financials.opportunityCostRatePercent}%)`;
   }
-  const opportunityCostFutureValue = Math.round(upfrontOutOfPocket * Math.pow(1 + opportunityRate, 25));
-  const opportunityCostProfit = Math.max(0, opportunityCostFutureValue - upfrontOutOfPocket);
+  const opportunityCostFutureValue = opportunityBenchmark.futureValue;
+  const opportunityCostProfit = opportunityBenchmark.profit;
   const opportunityCostDiff = lifetimeNetProfit - opportunityCostProfit;
   const batteryOutperformsAlternative = lifetimeNetProfit >= opportunityCostProfit;
 
@@ -1225,12 +1250,14 @@ export function deriveHorizonFinancialSummary(
       ? Math.round(((cumulativeCashFlow / totalCapitalOutlay) * 100) * 10) / 10
       : 0;
 
-  // Opportunity cost at target horizon
-  const oppRate = (analysis.opportunityCostRate || 4.5) / 100;
-  const opportunityCostFutureValue = Math.round(
-    analysis.upfrontOutOfPocket * Math.pow(1 + oppRate, safeHorizon)
-  );
-  const opportunityCostProfit = Math.max(0, opportunityCostFutureValue - analysis.upfrontOutOfPocket);
+  // Opportunity cost at target horizon (unified methodology)
+  const opportunityCostFutureValue = lastProj
+    ? lastProj.opportunityCostValue
+    : analysis.upfrontOutOfPocket;
+  const opportunityCostTotalContributions =
+    analysis.upfrontOutOfPocket + totalLoanPayments + totalReplacementCost;
+  const opportunityCostProfit =
+    opportunityCostFutureValue - opportunityCostTotalContributions;
   const opportunityCostDiff = cumulativeCashFlow - opportunityCostProfit;
 
   return {

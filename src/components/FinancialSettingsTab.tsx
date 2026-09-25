@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { BatteryProfile, MacroFinancials } from '../types/energy';
+import { calculateOpportunityCostBenchmark } from '../utils/opportunityCost';
 
 interface FinancialSettingsTabProps {
   financials: MacroFinancials;
@@ -69,11 +70,21 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
   const autonomyHours = Math.round((usableKwhInitial / critLoad) * 10) / 10;
   const autonomyDays = Math.round((autonomyHours / 24) * 10) / 10;
 
-  // Opportunity cost compound calculation preview
+  // Opportunity cost benchmark calculation preview (unified methodology)
   const oppYears = 15;
-  const oppRate = financials.opportunityCostRatePercent / 100;
-  const oppFutureVal = Math.round(upfrontNetCost * Math.pow(1 + oppRate, oppYears));
-  const oppProfit = oppFutureVal - upfrontNetCost;
+  const upfrontContribution = financials.isFinanced ? downPaymentAmount : upfrontNetCost;
+  const oppBenchmark = calculateOpportunityCostBenchmark({
+    horizonYears: oppYears,
+    annualRatePercent: financials.opportunityCostRatePercent ?? 4.5,
+    upfrontContribution,
+    monthlyLoanPayment,
+    loanTermYears: financials.isFinanced ? financials.loanTermYears : 0,
+    replacementEnabled: financials.replacementEnabled,
+    replacementCost: financials.replacementCost,
+    replacementYear: financials.replacementYear,
+  });
+  const oppFutureVal = Math.round(oppBenchmark.futureValue);
+  const oppProfit = Math.round(oppBenchmark.profit);
 
   return (
     <div className="space-y-8">
@@ -502,6 +513,9 @@ export const FinancialSettingsTab: React.FC<FinancialSettingsTabProps> = ({
               <span className="text-slate-400">{oppYears}-Yr Alternative Future Value:</span>
               <span className="font-bold text-white">${oppFutureVal.toLocaleString()} (+${oppProfit.toLocaleString()})</span>
             </div>
+            <p className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
+              Estimates the return you could have earned by investing the actual cash committed to the battery instead: upfront cash/down payment, debt service, and replacement costs (15-year preview).
+            </p>
           </div>
         </div>
       </div>
