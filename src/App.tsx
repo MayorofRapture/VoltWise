@@ -36,7 +36,7 @@ import { Zap, ChevronRight, Activity, ArrowRight, Bookmark } from 'lucide-react'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'data' | 'profiles' | 'financials' | 'results'>('results');
-  
+
   // TOU Saved Rate Profiles & Active Schedule
   const [touProfiles, setTouProfiles] = useState<TouProfile[]>(DEFAULT_TOU_PROFILES);
   const [activeTouProfileId, setActiveTouProfileId] = useState<string>('california-ev2a');
@@ -162,7 +162,7 @@ export default function App() {
               {activeTab === 'data' && '01. CSV Ingestion & TOU Schedule Matrix'}
               {activeTab === 'profiles' && '02. Battery Profiles & Hardware Strategy'}
               {activeTab === 'financials' && '03. Incentives, Escalation & Degradation'}
-              {activeTab === 'results' && '04. Results, 15-Yr Cash Flow & Dispatch'}
+              {activeTab === 'results' && '04. Results, Cash Flow & Dispatch'}
             </span>
           </div>
 
@@ -317,7 +317,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-400">VoltWise Engine</span>
             <span>·</span>
-            <span>8,760-Hour Dispatch & 15-Year Financial Lifecycle Simulator</span>
+            <span>8,760-Hour Dispatch & Financial Lifecycle Simulator</span>
           </div>
           <div className="text-slate-500">
             Client-side calculation engine · Zero telemetry

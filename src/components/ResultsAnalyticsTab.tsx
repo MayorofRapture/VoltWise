@@ -198,34 +198,21 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
     (a, b) => b.lifetimeRoiPercent - a.lifetimeRoiPercent
   )[0];
 
-  // Horizon Projections Calculation
-  const horizonProjections = useMemo(() => {
-    return (projections || []).slice(0, projectionHorizon);
-  }, [projections, projectionHorizon]);
-
-  const horizonSavings = useMemo(() => {
-    return horizonProjections.reduce((sum: number, p: YearProjection) => sum + p.annualSavings, 0);
-  }, [horizonProjections]);
-
+  // Authoritative Horizon Financial Summary
   const horizonSummary = useMemo(() => {
     if (!activeAnalysis) return null;
     return deriveHorizonFinancialSummary(activeAnalysis, projectionHorizon);
   }, [activeAnalysis, projectionHorizon]);
 
-  const horizonNetProfit = useMemo(() => {
-    if (horizonSummary) return horizonSummary.cumulativeCashFlow;
-    const totalOutlay = upfrontOutOfPocket +
-      (isFinanced ? Math.min(projectionHorizon, financials?.loanTermYears || 10) * monthlyLoanPayment * 12 : 0) +
-      (replacementEnabled && replacementYear <= projectionHorizon ? replacementCostTotal : 0);
-    return horizonSavings - totalOutlay;
-  }, [horizonSummary, horizonSavings, upfrontOutOfPocket, isFinanced, projectionHorizon, financials?.loanTermYears, monthlyLoanPayment, replacementEnabled, replacementYear, replacementCostTotal]);
+  // Horizon Projections Calculation for charting
+  const horizonProjections = useMemo(() => {
+    return (projections || []).slice(0, projectionHorizon);
+  }, [projections, projectionHorizon]);
 
-  const horizonNpv = useMemo(() => {
-    if (horizonSummary) return horizonSummary.netPresentValue;
-    return horizonProjections.length > 0
-      ? horizonProjections[horizonProjections.length - 1].cumulativeNpv
-      : npv;
-  }, [horizonSummary, horizonProjections, npv]);
+  const horizonSavings = horizonSummary?.cumulativeSavings ?? 0;
+  const horizonNetProfit = horizonSummary?.cumulativeCashFlow ?? 0;
+  const horizonNpv = horizonSummary?.netPresentValue ?? 0;
+  const horizonRoiPercent = horizonSummary?.horizonRoiPercent ?? 0;
 
   // Generate multi-year crossover chart points (Annual vs Monthly)
   const chartPoints = useMemo(() => {
@@ -876,12 +863,12 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-xs space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-amber-400 uppercase tracking-wider text-[11px]">
             <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-            <span>Time Value of Money (TVM) Alert: Negative Net Present Value</span>
+            <span>Time Value of Money (TVM) Alert: Negative 25-Year Net Present Value</span>
           </div>
           <p className="text-slate-300 leading-relaxed">
             While cumulative nominal energy savings yield a positive profit of{' '}
             <strong className="text-emerald-400 font-mono">+${lifetimeNetProfit.toLocaleString()}</strong> over 25 years, discounting future cash flows at your{' '}
-            <strong className="text-cyan-300 font-mono">{discountRatePercent}%</strong> discount rate results in an NPV of{' '}
+            <strong className="text-cyan-300 font-mono">{discountRatePercent}%</strong> discount rate results in a 25-year NPV of{' '}
             <strong className="text-rose-400 font-mono">-${Math.abs(npv).toLocaleString()}</strong>.
             This indicates that when accounting for the opportunity cost of capital, the system returns less than your baseline financial hurdle rate.
           </p>
@@ -1004,23 +991,27 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
         </div>
 
-        {/* Card 4: Net Present Value (NPV) & Lifetime Profit */}
+        {/* Card 4: Selected-Horizon Net Present Value (NPV) & Profit */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>Net Present Value (NPV)</span>
+            <span>{isPartialPeriod ? 'Net Present Value (NPV)' : `${projectionHorizon}-Year Net Present Value`}</span>
             <TrendingUp className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className={`text-2xl font-bold font-mono tabular-nums ${isPartialPeriod ? 'text-slate-400' : npv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
-            {isPartialPeriod ? 'Disabled' : npv >= 0 ? `+$${npv.toLocaleString()}` : `-$${Math.abs(npv).toLocaleString()}`}
+          <div className={`text-2xl font-bold font-mono tabular-nums ${isPartialPeriod || !horizonSummary ? 'text-slate-400' : horizonNpv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
+            {isPartialPeriod || !horizonSummary ? 'Disabled' : horizonNpv >= 0 ? `+$${horizonNpv.toLocaleString()}` : `-$${Math.abs(horizonNpv).toLocaleString()}`}
           </div>
           <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            {isPartialPeriod ? (
+            {isPartialPeriod || !horizonSummary ? (
               <span className="text-amber-400 font-medium">Requires ~1-year dataset for NPV</span>
             ) : (
               <>
-                <span className="text-slate-300 font-mono">Profit: ${lifetimeNetProfit.toLocaleString()}</span>
+                <span className="text-slate-300 font-mono">
+                  {projectionHorizon}-Year Profit: {horizonNetProfit >= 0 ? `+$${horizonNetProfit.toLocaleString()}` : `-$${Math.abs(horizonNetProfit).toLocaleString()}`}
+                </span>
                 <span>·</span>
-                <span className="text-emerald-400 font-mono">ROI: +{lifetimeRoiPercent}%</span>
+                <span className={horizonRoiPercent >= 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
+                  {projectionHorizon}-Year ROI: {horizonRoiPercent >= 0 ? `+${horizonRoiPercent}%` : `${horizonRoiPercent}%`}
+                </span>
               </>
             )}
           </div>
@@ -1034,31 +1025,31 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
             <span className="flex items-center gap-1.5">
               <Percent className="h-4 w-4 text-cyan-400" />
-              Opportunity Cost
+              25-Year Opportunity Cost
             </span>
             <span className="text-[10px] font-mono text-slate-400">{opportunityCostRate}%</span>
           </div>
           <p className="text-[11px] text-slate-400">
-            Compounding upfront capital in {opportunityCostVehicleName}:
+            Compounding upfront capital in {opportunityCostVehicleName} over 25 years:
           </p>
           <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
             <div className="flex justify-between">
-              <span className="text-slate-400">Alternative 25y Yield:</span>
+              <span className="text-slate-400">Alternative 25-Year Yield:</span>
               <span className="text-white font-bold">${opportunityCostProfit.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Battery Net Profit:</span>
+              <span className="text-slate-400">Battery 25-Year Net Profit:</span>
               <span className="text-emerald-400 font-bold">${lifetimeNetProfit.toLocaleString()}</span>
             </div>
             <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">Net Delta:</span>
+              <span className="text-slate-400">25-Year Net Delta:</span>
               <span className={`font-bold ${opportunityCostDiff >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {opportunityCostDiff >= 0 ? `+$${opportunityCostDiff.toLocaleString()}` : `-$${Math.abs(opportunityCostDiff).toLocaleString()}`}
               </span>
             </div>
           </div>
           <span className={`text-[10px] font-semibold block ${batteryOutperformsAlternative ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {batteryOutperformsAlternative ? '✓ Battery outperforms market vehicle' : 'Underperforms baseline index asset'}
+            {batteryOutperformsAlternative ? '✓ Battery outperforms market vehicle (25Y)' : 'Underperforms baseline index asset (25Y)'}
           </span>
         </div>
 
@@ -1102,16 +1093,16 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
             <span className="flex items-center gap-1.5">
               <BatteryLow className="h-4 w-4 text-amber-400" />
-              Health, Warranty & LCOS
+              25-Year Health, Warranty & LCOS
             </span>
-            <span className="text-[10px] font-mono text-amber-300">LCOS: ${lcosPerKwh}/kWh</span>
+            <span className="text-[10px] font-mono text-amber-300">25y LCOS: ${lcosPerKwh}/kWh</span>
           </div>
           <p className="text-[11px] text-slate-400">
-            Degradation fade & manufacturer warranty tracking:
+            25-Year degradation fade & manufacturer warranty tracking:
           </p>
           <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
             <div className="flex justify-between">
-              <span className="text-slate-400">End-of-Life SoH:</span>
+              <span className="text-slate-400">Year 25 End-of-Life SoH:</span>
               <span className="text-cyan-300 font-bold">{endOfLifeSohPercent}% ({remainingUsableCapacityKwh} kWh)</span>
             </div>
             <div className="flex justify-between">
@@ -1126,7 +1117,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             </div>
           </div>
           <span className="text-[10px] text-slate-400 block font-mono">
-            Discharged: {totalLifetimeDischargedKwh.toLocaleString()} lifetime kWh
+            Discharged: {totalLifetimeDischargedKwh.toLocaleString()} 25-year kWh
           </span>
         </div>
 
@@ -1135,7 +1126,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              Resilience & VOLL
+              25-Year Resilience & VOLL
             </span>
             <span className="text-[10px] font-mono text-emerald-400">+{outageAutonomyHours}h Autonomy</span>
           </div>
@@ -1152,7 +1143,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               <span className="text-emerald-400 font-bold">+${annualResilienceValue}/yr</span>
             </div>
             <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">25y Resilience Value:</span>
+              <span className="text-slate-400">25-Year Resilience Value:</span>
               <span className="text-cyan-300 font-bold">+${lifetimeResilienceValue.toLocaleString()}</span>
             </div>
           </div>
@@ -1408,7 +1399,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               <div className="flex justify-between text-slate-400 pt-1 border-t border-slate-800">
                 <span>{projectionHorizon}-Year NPV:</span>
                 <span className={`font-bold ${horizonNpv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
-                  ${horizonNpv.toLocaleString()}
+                  {horizonNpv >= 0 ? `+$${horizonNpv.toLocaleString()}` : `-$${Math.abs(horizonNpv).toLocaleString()}`}
                 </span>
               </div>
             </div>
@@ -2770,7 +2761,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               Multi-Profile Hardware, TVM & Financial Comparison Matrix
             </h3>
             <p className="text-xs text-slate-400">
-              Side-by-side comparison of all battery configurations evaluated under identical home load conditions.
+              Side-by-side 25-year lifetime comparison of all battery configurations evaluated under identical home load conditions.
             </p>
           </div>
         </div>
@@ -2785,9 +2776,9 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <th className="py-3 px-4 text-right">Net Installed</th>
                 <th className="py-3 px-4 text-right">Year 1 Savings</th>
                 <th className="py-3 px-4 text-right">Payback</th>
-                <th className="py-3 px-4 text-right">NPV ($)</th>
-                <th className="py-3 px-4 text-right">IRR (%)</th>
-                <th className="py-3 px-4 text-right">LCOS ($/kWh)</th>
+                <th className="py-3 px-4 text-right">25-Year NPV</th>
+                <th className="py-3 px-4 text-right">25-Year IRR</th>
+                <th className="py-3 px-4 text-right">25-Year LCOS</th>
                 <th className="py-3 px-4 text-right">Autonomy</th>
                 <th className="py-3 px-4 text-center">Action</th>
               </tr>
