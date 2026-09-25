@@ -38,6 +38,8 @@ import {
   RateTier,
   TouProfile,
   AnnualSimulationSummary,
+  YearProjection,
+  IntervalSimulationResult,
 } from '../types/energy';
 import {
   buildExportLlmJson,
@@ -120,57 +122,56 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   // LLM JSON Export Status
   const [hasExportedJson, setHasExportedJson] = useState<boolean>(false);
 
-  const {
-    profile,
-    annualSummary,
-    grossCost,
-    incentivesAmount,
-    netInstalledCost,
-    upfrontOutOfPocket,
-    year1Savings,
-    paybackYears,
-    paybackFormatted,
-    lifetimeTotalSavings,
-    lifetimeNetProfit,
-    lifetimeRoiPercent,
-    npv,
-    irrPercent,
-    isNpvNegativeWithPositiveProfit,
-    discountRatePercent,
-    opportunityCostVehicleName,
-    opportunityCostRate,
-    opportunityCostFutureValue,
-    opportunityCostProfit,
-    opportunityCostDiff,
-    batteryOutperformsAlternative,
-    isFinanced,
-    loanPrincipal,
-    monthlyLoanPayment,
-    monthlyElectricitySavingsYear1,
-    netMonthlyCashFlow,
-    isCashFlowPositiveDay1,
-    totalLoanPaymentLifetime,
-    totalLoanInterestPaid,
-    replacementCostTotal,
-    replacementYear,
-    replacementEnabled,
-    endOfLifeSohPercent,
-    remainingUsableCapacityKwh,
-    totalLifetimeDischargedKwh,
-    lcosPerKwh,
-    warrantedCycleLimit,
-    warrantedCycleExhaustionYear,
-    isWarrantyVoidedBeforePayback,
-    outageAutonomyHours,
-    outageAutonomyDays,
-    criticalLoadPowerKw,
-    annualResilienceValue,
-    lifetimeResilienceValue,
-    npvWithVoll,
-    lifetimeNetProfitWithVoll,
-    lifetimeRoiWithVollPercent,
-    projections,
-  } = activeAnalysis;
+  const profile = activeAnalysis ? activeAnalysis.profile : activeProfile;
+  const annualSummary = activeAnalysis ? activeAnalysis.annualSummary : activeSimulationSummary;
+
+  const grossCost = activeAnalysis?.grossCost ?? 0;
+  const incentivesAmount = activeAnalysis?.incentivesAmount ?? 0;
+  const netInstalledCost = activeAnalysis?.netInstalledCost ?? 0;
+  const upfrontOutOfPocket = activeAnalysis?.upfrontOutOfPocket ?? 0;
+  const year1Savings = activeAnalysis?.year1Savings ?? (annualSummary.periodSavings ?? annualSummary.year1Savings);
+  const paybackYears = activeAnalysis?.paybackYears ?? null;
+  const paybackFormatted = activeAnalysis?.paybackFormatted ?? 'N/A';
+  const lifetimeTotalSavings = activeAnalysis?.lifetimeTotalSavings ?? 0;
+  const lifetimeNetProfit = activeAnalysis?.lifetimeNetProfit ?? 0;
+  const lifetimeRoiPercent = activeAnalysis?.lifetimeRoiPercent ?? 0;
+  const npv = activeAnalysis?.npv ?? 0;
+  const irrPercent = activeAnalysis?.irrPercent ?? null;
+  const isNpvNegativeWithPositiveProfit = activeAnalysis?.isNpvNegativeWithPositiveProfit ?? false;
+  const discountRatePercent = activeAnalysis?.discountRatePercent ?? (financials?.discountRatePercent ?? 6);
+  const opportunityCostVehicleName = activeAnalysis?.opportunityCostVehicleName ?? 'HYSA';
+  const opportunityCostRate = activeAnalysis?.opportunityCostRate ?? 0.045;
+  const opportunityCostFutureValue = activeAnalysis?.opportunityCostFutureValue ?? 0;
+  const opportunityCostProfit = activeAnalysis?.opportunityCostProfit ?? 0;
+  const opportunityCostDiff = activeAnalysis?.opportunityCostDiff ?? 0;
+  const batteryOutperformsAlternative = activeAnalysis?.batteryOutperformsAlternative ?? false;
+  const isFinanced = activeAnalysis?.isFinanced ?? (financials?.isFinanced ?? false);
+  const loanPrincipal = activeAnalysis?.loanPrincipal ?? 0;
+  const monthlyLoanPayment = activeAnalysis?.monthlyLoanPayment ?? 0;
+  const monthlyElectricitySavingsYear1 = activeAnalysis?.monthlyElectricitySavingsYear1 ?? (year1Savings / 12);
+  const netMonthlyCashFlow = activeAnalysis?.netMonthlyCashFlow ?? 0;
+  const isCashFlowPositiveDay1 = activeAnalysis?.isCashFlowPositiveDay1 ?? false;
+  const totalLoanPaymentLifetime = activeAnalysis?.totalLoanPaymentLifetime ?? 0;
+  const totalLoanInterestPaid = activeAnalysis?.totalLoanInterestPaid ?? 0;
+  const replacementCostTotal = activeAnalysis?.replacementCostTotal ?? 0;
+  const replacementYear = activeAnalysis?.replacementYear ?? 10;
+  const replacementEnabled = activeAnalysis?.replacementEnabled ?? false;
+  const endOfLifeSohPercent = activeAnalysis?.endOfLifeSohPercent ?? 70;
+  const remainingUsableCapacityKwh = activeAnalysis?.remainingUsableCapacityKwh ?? (profile.totalCapacityKwh * (profile.usableDodPercent / 100) * 0.7);
+  const totalLifetimeDischargedKwh = activeAnalysis?.totalLifetimeDischargedKwh ?? 0;
+  const lcosPerKwh = activeAnalysis?.lcosPerKwh ?? 0;
+  const warrantedCycleLimit = activeAnalysis?.warrantedCycleLimit ?? profile.ratedCycleLife;
+  const warrantedCycleExhaustionYear = activeAnalysis?.warrantedCycleExhaustionYear ?? null;
+  const isWarrantyVoidedBeforePayback = activeAnalysis?.isWarrantyVoidedBeforePayback ?? false;
+  const outageAutonomyHours = activeAnalysis?.outageAutonomyHours ?? 0;
+  const outageAutonomyDays = activeAnalysis?.outageAutonomyDays ?? 0;
+  const criticalLoadPowerKw = activeAnalysis?.criticalLoadPowerKw ?? 0;
+  const annualResilienceValue = activeAnalysis?.annualResilienceValue ?? 0;
+  const lifetimeResilienceValue = activeAnalysis?.lifetimeResilienceValue ?? 0;
+  const npvWithVoll = activeAnalysis?.npvWithVoll ?? 0;
+  const lifetimeNetProfitWithVoll = activeAnalysis?.lifetimeNetProfitWithVoll ?? 0;
+  const lifetimeRoiWithVollPercent = activeAnalysis?.lifetimeRoiWithVollPercent ?? 0;
+  const projections: YearProjection[] = activeAnalysis?.projections ?? [];
 
   // Extract 24 hours for the selected day from the annual simulation
   const intervalCount = annualSummary.intervalResults.length;
@@ -203,21 +204,28 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   }, [projections, projectionHorizon]);
 
   const horizonSavings = useMemo(() => {
-    return horizonProjections.reduce((sum, p) => sum + p.annualSavings, 0);
+    return horizonProjections.reduce((sum: number, p: YearProjection) => sum + p.annualSavings, 0);
   }, [horizonProjections]);
 
+  const horizonSummary = useMemo(() => {
+    if (!activeAnalysis) return null;
+    return deriveHorizonFinancialSummary(activeAnalysis, projectionHorizon);
+  }, [activeAnalysis, projectionHorizon]);
+
   const horizonNetProfit = useMemo(() => {
+    if (horizonSummary) return horizonSummary.cumulativeCashFlow;
     const totalOutlay = upfrontOutOfPocket +
       (isFinanced ? Math.min(projectionHorizon, financials?.loanTermYears || 10) * monthlyLoanPayment * 12 : 0) +
       (replacementEnabled && replacementYear <= projectionHorizon ? replacementCostTotal : 0);
     return horizonSavings - totalOutlay;
-  }, [horizonSavings, upfrontOutOfPocket, isFinanced, projectionHorizon, financials?.loanTermYears, monthlyLoanPayment, replacementEnabled, replacementYear, replacementCostTotal]);
+  }, [horizonSummary, horizonSavings, upfrontOutOfPocket, isFinanced, projectionHorizon, financials?.loanTermYears, monthlyLoanPayment, replacementEnabled, replacementYear, replacementCostTotal]);
 
   const horizonNpv = useMemo(() => {
+    if (horizonSummary) return horizonSummary.netPresentValue;
     return horizonProjections.length > 0
       ? horizonProjections[horizonProjections.length - 1].cumulativeNpv
       : npv;
-  }, [horizonProjections, npv]);
+  }, [horizonSummary, horizonProjections, npv]);
 
   // Generate multi-year crossover chart points (Annual vs Monthly)
   const chartPoints = useMemo(() => {
@@ -242,7 +250,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         },
       ];
 
-      horizonProjections.forEach((p, idx) => {
+      horizonProjections.forEach((p: YearProjection, idx: number) => {
         const oppVal = Math.round(initialBase * Math.pow(1 + oppRate, p.year));
         pts.push({
           index: idx + 1,
@@ -321,6 +329,10 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Export CSV for the active horizon and view
   const handleExportProjectionsCsv = () => {
+    if (isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)) {
+      return;
+    }
+
     const headers = [
       'Timeline_Point',
       'Year',
@@ -359,6 +371,10 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Export complete analysis structured for LLM analysis & reporting (.json)
   const handleExportLlmJson = () => {
+    if (isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)) {
+      return;
+    }
+
     const exportPayload = buildExportLlmJson({
       activeAnalysis,
       projectionHorizon,
@@ -533,7 +549,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       }))
     );
 
-    annualSummary.intervalResults.forEach((interval) => {
+    annualSummary.intervalResults.forEach((interval: IntervalSimulationResult) => {
       const date = new Date(interval.timestamp.replace(' ', 'T'));
       const m = isNaN(date.getMonth()) ? 0 : date.getMonth();
       const h = interval.hour;
@@ -580,7 +596,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       }
     >();
 
-    annualSummary.intervalResults.forEach((interval, idx) => {
+    annualSummary.intervalResults.forEach((interval: IntervalSimulationResult, idx: number) => {
       let dayKey = '';
       let month = 0;
 
@@ -771,7 +787,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Maximum load in day for 24-hour chart scale
   const maxDayLoad = Math.max(
-    ...dayIntervals.map((d) => Math.max(d.homeLoadKwh, d.batteryChargeKwh, d.batteryDischargeKwh)),
+    ...dayIntervals.map((d: IntervalSimulationResult) => Math.max(d.homeLoadKwh, d.batteryChargeKwh, d.batteryDischargeKwh)),
     3.0
   );
 
@@ -791,12 +807,19 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleExportLlmJson}
+            disabled={isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border whitespace-nowrap shadow-sm ${
-              hasExportedJson
+              isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)
+                ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border-slate-800'
+                : hasExportedJson
                 ? 'bg-emerald-600 text-white border-emerald-400 shadow-emerald-900/50'
                 : 'text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/90 border-emerald-500/50 shadow-emerald-950 hover:border-emerald-400'
             }`}
-            title="Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting"
+            title={
+              isPartialPeriod || !activeAnalysis
+                ? 'Export disabled for partial-period or incomplete datasets'
+                : 'Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting'
+            }
           >
             {hasExportedJson ? (
               <CheckCircle2 className="h-3.5 w-3.5 text-white" />
@@ -810,7 +833,17 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
           <button
             onClick={handleExportProjectionsCsv}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap"
+            disabled={isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border rounded-lg transition-colors whitespace-nowrap ${
+              isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)
+                ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border-slate-800'
+                : 'text-slate-300 bg-slate-900 hover:bg-slate-800 border-slate-700/80'
+            }`}
+            title={
+              isPartialPeriod || !activeAnalysis
+                ? 'Export disabled for partial-period or incomplete datasets'
+                : 'Export Projections CSV'
+            }
           >
             <Download className="h-3.5 w-3.5 text-slate-400" />
             <span>Export Projections CSV</span>
@@ -1835,12 +1868,12 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                   </span>
                 </div>
                 <span className="font-mono text-emerald-400">
-                  Day Total Discharged: {dayIntervals.reduce((s, i) => s + i.batteryDischargeKwh, 0).toFixed(1)} kWh
+                  Day Total Discharged: {dayIntervals.reduce((s: number, i: IntervalSimulationResult) => s + i.batteryDischargeKwh, 0).toFixed(1)} kWh
                 </span>
               </div>
 
               <div className="h-44 flex items-end gap-1.5 pt-4 border-b border-slate-800">
-                {dayIntervals.map((d, h) => {
+                {dayIntervals.map((d: IntervalSimulationResult, h: number) => {
                   const loadH = (d.homeLoadKwh / maxDayLoad) * 100;
                   const chargeH = (d.batteryChargeKwh / maxDayLoad) * 100;
                   const dischargeH = (d.batteryDischargeKwh / maxDayLoad) * 100;
@@ -2694,7 +2727,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80 bg-slate-900/40 text-slate-300">
-                {dayIntervals.map((d, h) => (
+                {dayIntervals.map((d: IntervalSimulationResult, h: number) => (
                   <tr key={h} className="hover:bg-slate-800/50 transition-colors">
                     <td className="py-2 px-3 font-bold text-slate-200">
                       {h}:00 {h < 12 ? 'AM' : 'PM'}
@@ -2760,7 +2793,15 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 bg-slate-900/30">
-              {allAnalyses.map((analysis) => {
+              {allAnalyses.length === 0 || isPartialPeriod ? (
+                <tr>
+                  <td colSpan={11} className="py-8 px-4 text-center text-slate-400">
+                    <p className="text-sm font-medium">Multi-profile multi-year financial matrix is disabled for partial-period datasets.</p>
+                    <p className="text-xs text-slate-500 mt-1">Full 8,760-hour annual data is required for long-term multi-profile financial comparison.</p>
+                  </td>
+                </tr>
+              ) : (
+                allAnalyses.map((analysis) => {
                 const isCurrent = analysis.profile.id === profile.id;
                 const isFastestPayback =
                   fastestPaybackProfile &&
@@ -2866,7 +2907,8 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                     </td>
                   </tr>
                 );
-              })}
+              })
+            )}
             </tbody>
           </table>
         </div>
@@ -2878,13 +2920,19 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
   activeAnalysis,
   allAnalyses,
+  activeSimulationSummary,
+  allSimulationSummaries,
+  activeProfile,
   setActiveProfileId,
   tiers,
   activeTouProfile,
   financials,
   csvResult,
 }) => {
-  if (!activeAnalysis) {
+  const effectiveSummary = activeAnalysis ? activeAnalysis.annualSummary : activeSimulationSummary;
+  const effectiveProfile = activeAnalysis ? activeAnalysis.profile : activeProfile;
+
+  if (!effectiveSummary || !effectiveProfile) {
     return (
       <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-12 text-center text-slate-400 space-y-3">
         <Activity className="h-8 w-8 text-slate-500 mx-auto animate-pulse" />
@@ -2900,6 +2948,8 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
     <ResultsAnalyticsContent
       activeAnalysis={activeAnalysis}
       allAnalyses={allAnalyses}
+      activeSimulationSummary={effectiveSummary}
+      activeProfile={effectiveProfile}
       setActiveProfileId={setActiveProfileId}
       tiers={tiers}
       activeTouProfile={activeTouProfile}
