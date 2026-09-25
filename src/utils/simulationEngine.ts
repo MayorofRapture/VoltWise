@@ -14,6 +14,7 @@ import {
   AnnualSimulationSummary,
   HorizonFinancialSummary,
   DatasetCompleteness,
+  PartialPeriodDisplayMetrics,
 } from '../types/energy';
 
 /**
@@ -1281,3 +1282,37 @@ export function getHeaderPaybackText(
   if (!isSuitableForAnnual || !analysis) return null;
   return analysis.paybackFormatted;
 }
+
+/**
+ * Derives valid, observed operational metrics for partial-period datasets.
+ * Does not calculate or fabricate long-term financial, lifecycle, or TVM metrics.
+ */
+export function derivePartialPeriodDisplayMetrics(
+  profile: BatteryProfile,
+  summary: AnnualSimulationSummary,
+  completeness?: DatasetCompleteness | null
+): PartialPeriodDisplayMetrics {
+  const durationDays =
+    completeness?.durationDays ??
+    summary.durationDays ??
+    Math.max(1, Math.floor(summary.totalIntervals / 24));
+  const baselinePeriodCostUsd = summary.baselinePeriodCost ?? summary.baselineAnnualCost;
+  const simulatedPeriodCostUsd = summary.simulatedPeriodCost ?? summary.simulatedAnnualCost;
+  const periodSavingsUsd = summary.periodSavings ?? summary.year1Savings;
+
+  return {
+    configuredInstalledCostUsd: profile.installedCost,
+    durationDays,
+    baselinePeriodCostUsd,
+    simulatedPeriodCostUsd,
+    periodSavingsUsd,
+    savingsPercentage: summary.savingsPercentage,
+    totalHomeLoadKwh: summary.totalHomeLoadKwh,
+    gridImportKwh: summary.annualGridImportKwh,
+    gridExportKwh: summary.annualGridExportKwh,
+    batteryDischargedKwh: summary.annualBatteryDischargedKwh,
+    equivalentFullCycles: summary.equivalentFullCycles,
+    peakDemandKw: summary.maxPeakDemandKw,
+  };
+}
+

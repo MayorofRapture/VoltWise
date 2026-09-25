@@ -46,7 +46,10 @@ import {
   canExportProjectionsJson,
   canExportProjectionsCsv,
 } from '../utils/exportJson';
-import { deriveHorizonFinancialSummary } from '../utils/simulationEngine';
+import {
+  deriveHorizonFinancialSummary,
+  derivePartialPeriodDisplayMetrics,
+} from '../utils/simulationEngine';
 
 export interface ResultsAnalyticsTabProps {
   activeAnalysis: ProfileFinancialAnalysis | null;
@@ -88,6 +91,23 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   const isPartialPeriod = Boolean(
     (completeness && !completeness.isSuitableForAnnualProjection) || !activeAnalysis
   );
+  const hasFinancialAnalysis = !isPartialPeriod && activeAnalysis !== null;
+
+  // Analysis-backed variables with safe fallbacks
+  const isFinanced = activeAnalysis ? activeAnalysis.isFinanced : Boolean(financials?.isFinanced);
+  const discountRatePercent = activeAnalysis?.discountRatePercent ?? (financials?.discountRatePercent ?? 5);
+  const opportunityCostVehicleName =
+    activeAnalysis?.opportunityCostVehicleName ||
+    (financials?.opportunityCostVehicle === 'hysa'
+      ? 'High-Yield Savings (HYSA)'
+      : financials?.opportunityCostVehicle === 'custom'
+      ? 'Custom Hurdle Rate'
+      : 'S&P 500 Index ETF');
+  const replacementYear = activeAnalysis?.replacementYear ?? 10;
+  const replacementCostTotal = activeAnalysis?.replacementCostTotal ?? 0;
+  const npv = activeAnalysis?.npv ?? 0;
+  const lifetimeNetProfit = activeAnalysis?.lifetimeNetProfit ?? 0;
+  const isNpvNegativeWithPositiveProfit = activeAnalysis?.isNpvNegativeWithPositiveProfit ?? false;
 
   // Chart Controls State
   const [projectionHorizon, setProjectionHorizon] = useState<number>(15); // 1 to 25 years
@@ -122,55 +142,15 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   // LLM JSON Export Status
   const [hasExportedJson, setHasExportedJson] = useState<boolean>(false);
 
+  // Common data valid in both modes
   const profile = activeAnalysis ? activeAnalysis.profile : activeProfile;
   const annualSummary = activeAnalysis ? activeAnalysis.annualSummary : activeSimulationSummary;
 
-  const grossCost = activeAnalysis?.grossCost ?? 0;
-  const incentivesAmount = activeAnalysis?.incentivesAmount ?? 0;
-  const netInstalledCost = activeAnalysis?.netInstalledCost ?? 0;
-  const upfrontOutOfPocket = activeAnalysis?.upfrontOutOfPocket ?? 0;
-  const year1Savings = activeAnalysis?.year1Savings ?? (annualSummary.periodSavings ?? annualSummary.year1Savings);
-  const paybackYears = activeAnalysis?.paybackYears ?? null;
-  const paybackFormatted = activeAnalysis?.paybackFormatted ?? 'N/A';
-  const lifetimeTotalSavings = activeAnalysis?.lifetimeTotalSavings ?? 0;
-  const lifetimeNetProfit = activeAnalysis?.lifetimeNetProfit ?? 0;
-  const lifetimeRoiPercent = activeAnalysis?.lifetimeRoiPercent ?? 0;
-  const npv = activeAnalysis?.npv ?? 0;
-  const irrPercent = activeAnalysis?.irrPercent ?? null;
-  const isNpvNegativeWithPositiveProfit = activeAnalysis?.isNpvNegativeWithPositiveProfit ?? false;
-  const discountRatePercent = activeAnalysis?.discountRatePercent ?? (financials?.discountRatePercent ?? 6);
-  const opportunityCostVehicleName = activeAnalysis?.opportunityCostVehicleName ?? 'HYSA';
-  const opportunityCostRate = activeAnalysis?.opportunityCostRate ?? 0.045;
-  const opportunityCostFutureValue = activeAnalysis?.opportunityCostFutureValue ?? 0;
-  const opportunityCostProfit = activeAnalysis?.opportunityCostProfit ?? 0;
-  const opportunityCostDiff = activeAnalysis?.opportunityCostDiff ?? 0;
-  const batteryOutperformsAlternative = activeAnalysis?.batteryOutperformsAlternative ?? false;
-  const isFinanced = activeAnalysis?.isFinanced ?? (financials?.isFinanced ?? false);
-  const loanPrincipal = activeAnalysis?.loanPrincipal ?? 0;
-  const monthlyLoanPayment = activeAnalysis?.monthlyLoanPayment ?? 0;
-  const monthlyElectricitySavingsYear1 = activeAnalysis?.monthlyElectricitySavingsYear1 ?? (year1Savings / 12);
-  const netMonthlyCashFlow = activeAnalysis?.netMonthlyCashFlow ?? 0;
-  const isCashFlowPositiveDay1 = activeAnalysis?.isCashFlowPositiveDay1 ?? false;
-  const totalLoanPaymentLifetime = activeAnalysis?.totalLoanPaymentLifetime ?? 0;
-  const totalLoanInterestPaid = activeAnalysis?.totalLoanInterestPaid ?? 0;
-  const replacementCostTotal = activeAnalysis?.replacementCostTotal ?? 0;
-  const replacementYear = activeAnalysis?.replacementYear ?? 10;
-  const replacementEnabled = activeAnalysis?.replacementEnabled ?? false;
-  const endOfLifeSohPercent = activeAnalysis?.endOfLifeSohPercent ?? 70;
-  const remainingUsableCapacityKwh = activeAnalysis?.remainingUsableCapacityKwh ?? (profile.totalCapacityKwh * (profile.usableDodPercent / 100) * 0.7);
-  const totalLifetimeDischargedKwh = activeAnalysis?.totalLifetimeDischargedKwh ?? 0;
-  const lcosPerKwh = activeAnalysis?.lcosPerKwh ?? 0;
-  const warrantedCycleLimit = activeAnalysis?.warrantedCycleLimit ?? profile.ratedCycleLife;
-  const warrantedCycleExhaustionYear = activeAnalysis?.warrantedCycleExhaustionYear ?? null;
-  const isWarrantyVoidedBeforePayback = activeAnalysis?.isWarrantyVoidedBeforePayback ?? false;
-  const outageAutonomyHours = activeAnalysis?.outageAutonomyHours ?? 0;
-  const outageAutonomyDays = activeAnalysis?.outageAutonomyDays ?? 0;
-  const criticalLoadPowerKw = activeAnalysis?.criticalLoadPowerKw ?? 0;
-  const annualResilienceValue = activeAnalysis?.annualResilienceValue ?? 0;
-  const lifetimeResilienceValue = activeAnalysis?.lifetimeResilienceValue ?? 0;
-  const npvWithVoll = activeAnalysis?.npvWithVoll ?? 0;
-  const lifetimeNetProfitWithVoll = activeAnalysis?.lifetimeNetProfitWithVoll ?? 0;
-  const lifetimeRoiWithVollPercent = activeAnalysis?.lifetimeRoiWithVollPercent ?? 0;
+  // Derive genuine observed-period display metrics for partial-period mode
+  const partialMetrics = useMemo(() => {
+    return derivePartialPeriodDisplayMetrics(profile, annualSummary, completeness);
+  }, [profile, annualSummary, completeness]);
+
   const projections: YearProjection[] = activeAnalysis?.projections ?? [];
 
   // Extract 24 hours for the selected day from the annual simulation
@@ -216,8 +196,11 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Generate multi-year crossover chart points (Annual vs Monthly)
   const chartPoints = useMemo(() => {
-    const oppRate = (opportunityCostRate || 4.5) / 100;
-    const initialBase = upfrontOutOfPocket;
+    if (!hasFinancialAnalysis || !activeAnalysis) return [];
+    const oppRate = (activeAnalysis.opportunityCostRate || 4.5) / 100;
+    const initialBase = activeAnalysis.upfrontOutOfPocket;
+    const replacementEnabled = activeAnalysis.replacementEnabled;
+    const replacementYear = activeAnalysis.replacementYear;
 
     if (granularity === 'annual') {
       const pts: any[] = [
@@ -312,7 +295,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       }
       return pts;
     }
-  }, [horizonProjections, projectionHorizon, granularity, upfrontOutOfPocket, profile.totalCapacityKwh, opportunityCostRate, replacementEnabled, replacementYear]);
+  }, [hasFinancialAnalysis, activeAnalysis, horizonProjections, projectionHorizon, granularity, profile.totalCapacityKwh]);
 
   // Export CSV for the active horizon and view
   const handleExportProjectionsCsv = () => {
@@ -413,7 +396,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
     chartPoints.forEach((p) => visibleValues.push(p.discountedNpv));
   }
   if (visibleValues.length === 0) {
-    visibleValues.push(-upfrontOutOfPocket, 1000);
+    visibleValues.push(-(activeAnalysis?.upfrontOutOfPocket ?? 0), 1000);
   }
 
   const rawMinY = Math.min(...visibleValues);
@@ -456,14 +439,20 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
     .join(' ');
 
   // Breakeven crossover coordinates
-  const hasBreakeven = paybackYears !== null && paybackYears <= projectionHorizon;
-  const breakevenX = hasBreakeven ? getX(paybackYears!) : null;
+  const paybackYears = activeAnalysis?.paybackYears ?? null;
+  const paybackFormatted = activeAnalysis?.paybackFormatted ?? 'N/A';
+  const hasBreakeven = Boolean(
+    hasFinancialAnalysis &&
+    paybackYears !== null &&
+    paybackYears <= projectionHorizon
+  );
+  const breakevenX = hasBreakeven && paybackYears !== null ? getX(paybackYears) : null;
 
   // Exact spend at crossover breakeven point (where Baseline Spend = Battery Spend)
-  const breakevenSpendVal = hasBreakeven
+  const breakevenSpendVal = hasBreakeven && paybackYears !== null
     ? (() => {
-        const yFloor = Math.floor(paybackYears!);
-        const frac = paybackYears! - yFloor;
+        const yFloor = Math.floor(paybackYears);
+        const frac = paybackYears - yFloor;
         const p0 = yFloor === 0 ? { baselineSpend: 0 } : chartPoints.find((p) => p.year === yFloor) || { baselineSpend: 0 };
         const p1 = chartPoints.find((p) => p.year === yFloor + 1) || p0;
         return p0.baselineSpend + (p1.baselineSpend - p0.baselineSpend) * frac;
@@ -472,8 +461,12 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   const breakevenSpendY = breakevenSpendVal !== null ? getY(breakevenSpendVal) : null;
 
   // Inverter replacement coordinate
-  const hasReplacementInHorizon = replacementEnabled && replacementYear <= projectionHorizon;
-  const replacementX = hasReplacementInHorizon ? getX(replacementYear) : null;
+  const hasReplacementInHorizon = Boolean(
+    hasFinancialAnalysis &&
+    activeAnalysis?.replacementEnabled &&
+    activeAnalysis.replacementYear <= projectionHorizon
+  );
+  const replacementX = hasReplacementInHorizon && activeAnalysis ? getX(activeAnalysis.replacementYear) : null;
 
   // Generate 5-6 nice horizontal grid line values
   const yTicks = useMemo(() => {
@@ -876,7 +869,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
       )}
 
       {/* WARRANTY RISK CALLOUT (if cycles void warranty before simple payback) */}
-      {!isPartialPeriod && isWarrantyVoidedBeforePayback && (
+      {hasFinancialAnalysis && activeAnalysis && activeAnalysis.isWarrantyVoidedBeforePayback && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-4 text-xs space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-rose-400 uppercase tracking-wider text-[11px]">
             <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
@@ -884,79 +877,93 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
           <p className="text-slate-300 leading-relaxed">
             At the current cycling rate ({annualSummary.equivalentFullCycles} cycles/year), the manufacturer's{' '}
-            <strong className="text-white font-mono">{warrantedCycleLimit.toLocaleString()}-cycle</strong> warranted threshold will be exhausted in{' '}
-            <strong className="text-rose-400 font-mono">Year {warrantedCycleExhaustionYear}</strong>, before the battery reaches simple financial payback ({paybackFormatted}).
-            Unwarranted operation risk occurs between Year {warrantedCycleExhaustionYear} and breakeven.
+            <strong className="text-white font-mono">{(activeAnalysis.warrantedCycleLimit ?? profile.ratedCycleLife).toLocaleString()}-cycle</strong> warranted threshold will be exhausted in{' '}
+            <strong className="text-rose-400 font-mono">Year {activeAnalysis.warrantedCycleExhaustionYear}</strong>, before the battery reaches simple financial payback ({activeAnalysis.paybackFormatted}).
+            Unwarranted operation risk occurs between Year {activeAnalysis.warrantedCycleExhaustionYear} and breakeven.
           </p>
         </div>
       )}
 
       {/* 4 PRIMARY METRIC SUMMARY CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Net Capital / Upfront Out-of-Pocket */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>{isFinanced ? 'Upfront Down Payment' : 'Net Out-of-Pocket Cost'}</span>
-            <DollarSign className="h-4 w-4 text-emerald-400" />
-          </div>
-          <div className="text-2xl font-bold text-white font-mono tabular-nums">
-            ${upfrontOutOfPocket.toLocaleString()}
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            <span>Net CapEx: ${netInstalledCost.toLocaleString()}</span>
-            <span>·</span>
-            <span className={isFinanced ? 'text-indigo-400 font-semibold' : 'text-emerald-400'}>
-              {isFinanced ? 'Financed' : 'Cash'}
-            </span>
-          </div>
-        </div>
-
-        {/* Card 2: Year 1 Savings & Net Monthly Cash Flow */}
+        {/* Card 1: Capital Outlay / Configured Cost */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
             <span>
-              {isPartialPeriod
-                ? `Partial-Period Savings (${completeness?.durationDays ?? daysInDataset}d)`
-                : isFinanced
+              {hasFinancialAnalysis && activeAnalysis
+                ? (activeAnalysis.isFinanced ? 'Upfront Down Payment' : 'Net Out-of-Pocket Cost')
+                : 'Configured Installed Cost'}
+            </span>
+            <DollarSign className="h-4 w-4 text-emerald-400" />
+          </div>
+          <div className="text-2xl font-bold text-white font-mono tabular-nums">
+            ${hasFinancialAnalysis && activeAnalysis
+              ? activeAnalysis.upfrontOutOfPocket.toLocaleString()
+              : profile.installedCost.toLocaleString()}
+          </div>
+          <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+            {hasFinancialAnalysis && activeAnalysis ? (
+              <>
+                <span>Net CapEx: ${activeAnalysis.netInstalledCost.toLocaleString()}</span>
+                <span>·</span>
+                <span className={activeAnalysis.isFinanced ? 'text-indigo-400 font-semibold' : 'text-emerald-400'}>
+                  {activeAnalysis.isFinanced ? 'Financed' : 'Cash'}
+                </span>
+              </>
+            ) : (
+              <span className="text-amber-400 font-medium">
+                Financial projection unavailable until annual data is provided
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Card 2: Savings / Cash Flow */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
+            <span>
+              {!hasFinancialAnalysis || !activeAnalysis
+                ? 'Partial-Period Savings'
+                : activeAnalysis.isFinanced
                 ? 'Net Monthly Cash Flow'
                 : 'Year 1 Energy Savings'}
             </span>
             <Zap className="h-4 w-4 text-emerald-400" />
           </div>
-          {isPartialPeriod ? (
+          {!hasFinancialAnalysis || !activeAnalysis ? (
             <div>
               <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
-                ${year1Savings.toLocaleString()}
+                ${partialMetrics.periodSavingsUsd.toLocaleString()}
                 <span className="text-xs text-slate-400 font-sans ml-1 font-normal">
-                  / {completeness?.durationDays ?? daysInDataset} days
+                  / {partialMetrics.durationDays} days
                 </span>
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
                 <span className="text-amber-400 font-medium">Partial data — not annualized</span>
                 <span>·</span>
-                <span className="text-emerald-400 font-semibold">-{annualSummary.savingsPercentage}% period cut</span>
+                <span className="text-emerald-400 font-semibold">-{partialMetrics.savingsPercentage}% period cut</span>
               </div>
             </div>
-          ) : isFinanced ? (
+          ) : activeAnalysis.isFinanced ? (
             <div>
-              <div className={`text-2xl font-bold font-mono tabular-nums ${isCashFlowPositiveDay1 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {netMonthlyCashFlow >= 0 ? `+$${netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(netMonthlyCashFlow).toFixed(2)}`}
+              <div className={`text-2xl font-bold font-mono tabular-nums ${activeAnalysis.isCashFlowPositiveDay1 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {activeAnalysis.netMonthlyCashFlow >= 0 ? `+$${activeAnalysis.netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(activeAnalysis.netMonthlyCashFlow).toFixed(2)}`}
                 <span className="text-xs text-slate-400 font-sans ml-1 font-normal">/mo</span>
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-                <span>Savings: +${monthlyElectricitySavingsYear1.toFixed(0)}</span>
+                <span>Savings: +${activeAnalysis.monthlyElectricitySavingsYear1.toFixed(0)}</span>
                 <span>·</span>
-                <span>Loan: -${monthlyLoanPayment.toFixed(0)}</span>
+                <span>Loan: -${activeAnalysis.monthlyLoanPayment.toFixed(0)}</span>
               </div>
             </div>
           ) : (
             <div>
               <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
-                ${year1Savings.toLocaleString()}
+                ${activeAnalysis.year1Savings.toLocaleString()}
                 <span className="text-xs text-slate-400 font-sans ml-1 font-normal">/year</span>
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-                <span>Monthly: +${monthlyElectricitySavingsYear1.toFixed(0)}/mo</span>
+                <span>Monthly: +${activeAnalysis.monthlyElectricitySavingsYear1.toFixed(0)}/mo</span>
                 <span>·</span>
                 <span className="text-emerald-400 font-semibold">-{annualSummary.savingsPercentage}% bill cut</span>
               </div>
@@ -967,44 +974,49 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         {/* Card 3: Payback Period & IRR */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>Payback & Internal Return (IRR)</span>
+            <span>{hasFinancialAnalysis && activeAnalysis ? 'Payback & Internal Return (IRR)' : 'Payback & IRR'}</span>
             <Clock className="h-4 w-4 text-amber-400" />
           </div>
-          <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-amber-300 font-mono tabular-nums">
-              {isPartialPeriod ? 'Disabled' : paybackFormatted}
-            </span>
-            <span className="text-xs font-mono font-bold text-cyan-300">
-              {isPartialPeriod ? 'Partial Data' : irrPercent !== null ? `IRR: ${irrPercent}%` : 'IRR: <0%'}
-            </span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            {isPartialPeriod ? (
-              <span className="text-amber-400 font-medium">Requires ~1-year dataset for payback</span>
-            ) : (
-              <>
-                <span>Discount Rate: {discountRatePercent}%</span>
+          {hasFinancialAnalysis && activeAnalysis ? (
+            <>
+              <div className="flex items-baseline justify-between">
+                <span className="text-2xl font-bold text-amber-300 font-mono tabular-nums">
+                  {activeAnalysis.paybackFormatted}
+                </span>
+                <span className="text-xs font-mono font-bold text-cyan-300">
+                  {activeAnalysis.irrPercent !== null ? `IRR: ${activeAnalysis.irrPercent}%` : 'IRR: <0%'}
+                </span>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+                <span>Discount Rate: {activeAnalysis.discountRatePercent}%</span>
                 <span>·</span>
                 <span>{annualSummary.equivalentFullCycles} cycles/yr</span>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-slate-400 font-mono tabular-nums">
+                Unavailable
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+                <span className="text-amber-400 font-medium">Requires approximately one year of suitable data</span>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Card 4: Selected-Horizon Net Present Value (NPV) & Profit */}
+        {/* Card 4: Net Present Value (NPV) */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>{isPartialPeriod ? 'Net Present Value (NPV)' : `${projectionHorizon}-Year Net Present Value`}</span>
+            <span>{hasFinancialAnalysis && activeAnalysis ? `${projectionHorizon}-Year Net Present Value` : 'Net Present Value'}</span>
             <TrendingUp className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className={`text-2xl font-bold font-mono tabular-nums ${isPartialPeriod || !horizonSummary ? 'text-slate-400' : horizonNpv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
-            {isPartialPeriod || !horizonSummary ? 'Disabled' : horizonNpv >= 0 ? `+$${horizonNpv.toLocaleString()}` : `-$${Math.abs(horizonNpv).toLocaleString()}`}
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            {isPartialPeriod || !horizonSummary ? (
-              <span className="text-amber-400 font-medium">Requires ~1-year dataset for NPV</span>
-            ) : (
-              <>
+          {hasFinancialAnalysis && activeAnalysis && horizonSummary ? (
+            <>
+              <div className={`text-2xl font-bold font-mono tabular-nums ${horizonNpv >= 0 ? 'text-cyan-300' : 'text-rose-400'}`}>
+                {horizonNpv >= 0 ? `+$${horizonNpv.toLocaleString()}` : `-$${Math.abs(horizonNpv).toLocaleString()}`}
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
                 <span className="text-slate-300 font-mono">
                   {projectionHorizon}-Year Profit: {horizonNetProfit >= 0 ? `+$${horizonNetProfit.toLocaleString()}` : `-$${Math.abs(horizonNetProfit).toLocaleString()}`}
                 </span>
@@ -1012,152 +1024,240 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <span className={horizonRoiPercent >= 0 ? 'text-emerald-400 font-mono' : 'text-rose-400 font-mono'}>
                   {projectionHorizon}-Year ROI: {horizonRoiPercent >= 0 ? `+${horizonRoiPercent}%` : `${horizonRoiPercent}%`}
                 </span>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-slate-400 font-mono tabular-nums">
+                Unavailable
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+                <span className="text-amber-400 font-medium">Requires approximately one year of suitable data</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* 4 SECONDARY PANELS: TVM OPPORTUNITY COST, LOAN FINANCING, ASSET HEALTH & RESILIENCE */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Panel 1: Opportunity Cost Comparison */}
-        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
-            <span className="flex items-center gap-1.5">
-              <Percent className="h-4 w-4 text-cyan-400" />
-              25-Year Opportunity Cost
+      {/* SECONDARY PANELS: FULL FINANCIAL PANELS (if annual data) OR OBSERVED OPERATIONAL SUMMARY (if partial) */}
+      {hasFinancialAnalysis && activeAnalysis ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* Panel 1: Opportunity Cost Comparison */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Percent className="h-4 w-4 text-cyan-400" />
+                25-Year Opportunity Cost
+              </span>
+              <span className="text-[10px] font-mono text-slate-400">{activeAnalysis.opportunityCostRate}%</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Compounding upfront capital in {activeAnalysis.opportunityCostVehicleName} over 25 years:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Alternative 25-Year Yield:</span>
+                <span className="text-white font-bold">${activeAnalysis.opportunityCostProfit.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Battery 25-Year Net Profit:</span>
+                <span className="text-emerald-400 font-bold">${activeAnalysis.lifetimeNetProfit.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">25-Year Net Delta:</span>
+                <span className={`font-bold ${activeAnalysis.opportunityCostDiff >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {activeAnalysis.opportunityCostDiff >= 0 ? `+$${activeAnalysis.opportunityCostDiff.toLocaleString()}` : `-$${Math.abs(activeAnalysis.opportunityCostDiff).toLocaleString()}`}
+                </span>
+              </div>
+            </div>
+            <span className={`text-[10px] font-semibold block ${activeAnalysis.batteryOutperformsAlternative ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {activeAnalysis.batteryOutperformsAlternative ? '✓ Battery outperforms market vehicle (25Y)' : 'Underperforms baseline index asset (25Y)'}
             </span>
-            <span className="text-[10px] font-mono text-slate-400">{opportunityCostRate}%</span>
           </div>
-          <p className="text-[11px] text-slate-400">
-            Compounding upfront capital in {opportunityCostVehicleName} over 25 years:
-          </p>
-          <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Alternative 25-Year Yield:</span>
-              <span className="text-white font-bold">${opportunityCostProfit.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Battery 25-Year Net Profit:</span>
-              <span className="text-emerald-400 font-bold">${lifetimeNetProfit.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">25-Year Net Delta:</span>
-              <span className={`font-bold ${opportunityCostDiff >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {opportunityCostDiff >= 0 ? `+$${opportunityCostDiff.toLocaleString()}` : `-$${Math.abs(opportunityCostDiff).toLocaleString()}`}
+
+          {/* Panel 2: Financing & Debt Service */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Landmark className="h-4 w-4 text-indigo-400" />
+                Financing Cash Flow
+              </span>
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${activeAnalysis.isCashFlowPositiveDay1 ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-slate-900 text-slate-400'}`}>
+                {activeAnalysis.isFinanced ? (activeAnalysis.isCashFlowPositiveDay1 ? 'Day 1 Cash+' : 'Net Investment') : 'Cash Buy'}
               </span>
             </div>
+            <p className="text-[11px] text-slate-400">
+              {activeAnalysis.isFinanced ? `${financials?.loanAprPercent}% APR over ${financials?.loanTermYears} years` : '100% upfront cash purchase'}
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Monthly Bill Savings:</span>
+                <span className="text-emerald-400 font-bold">+${activeAnalysis.monthlyElectricitySavingsYear1.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Monthly Loan Amortization:</span>
+                <span className="text-rose-400 font-bold">-${activeAnalysis.monthlyLoanPayment.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Net Monthly Delta:</span>
+                <span className={`font-bold ${activeAnalysis.netMonthlyCashFlow >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {activeAnalysis.netMonthlyCashFlow >= 0 ? `+$${activeAnalysis.netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(activeAnalysis.netMonthlyCashFlow).toFixed(2)}`}
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] text-slate-400 block font-mono">
+              {activeAnalysis.isFinanced ? `Total Interest: $${activeAnalysis.totalLoanInterestPaid.toLocaleString()}` : 'Zero interest expense'}
+            </span>
           </div>
-          <span className={`text-[10px] font-semibold block ${batteryOutperformsAlternative ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {batteryOutperformsAlternative ? '✓ Battery outperforms market vehicle (25Y)' : 'Underperforms baseline index asset (25Y)'}
-          </span>
-        </div>
 
-        {/* Panel 2: Financing & Debt Service */}
-        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
-            <span className="flex items-center gap-1.5">
-              <Landmark className="h-4 w-4 text-indigo-400" />
-              Financing Cash Flow
-            </span>
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isCashFlowPositiveDay1 ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-slate-900 text-slate-400'}`}>
-              {isFinanced ? (isCashFlowPositiveDay1 ? 'Day 1 Cash+' : 'Net Investment') : 'Cash Buy'}
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            {isFinanced ? `${financials?.loanAprPercent}% APR over ${financials?.loanTermYears} years` : '100% upfront cash purchase'}
-          </p>
-          <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Monthly Bill Savings:</span>
-              <span className="text-emerald-400 font-bold">+${monthlyElectricitySavingsYear1.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Monthly Loan Amortization:</span>
-              <span className="text-rose-400 font-bold">-${monthlyLoanPayment.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">Net Monthly Delta:</span>
-              <span className={`font-bold ${netMonthlyCashFlow >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {netMonthlyCashFlow >= 0 ? `+$${netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(netMonthlyCashFlow).toFixed(2)}`}
+          {/* Panel 3: Asset Health, Warranty & LCOS */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <BatteryLow className="h-4 w-4 text-amber-400" />
+                25-Year Health, Warranty & LCOS
               </span>
+              <span className="text-[10px] font-mono text-amber-300">25y LCOS: ${activeAnalysis.lcosPerKwh}/kWh</span>
             </div>
-          </div>
-          <span className="text-[10px] text-slate-400 block font-mono">
-            {isFinanced ? `Total Interest: $${totalLoanInterestPaid.toLocaleString()}` : 'Zero interest expense'}
-          </span>
-        </div>
-
-        {/* Panel 3: Asset Health, Warranty & LCOS */}
-        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
-            <span className="flex items-center gap-1.5">
-              <BatteryLow className="h-4 w-4 text-amber-400" />
-              25-Year Health, Warranty & LCOS
+            <p className="text-[11px] text-slate-400">
+              25-Year degradation fade & manufacturer warranty tracking:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Year 25 End-of-Life SoH:</span>
+                <span className="text-cyan-300 font-bold">{activeAnalysis.endOfLifeSohPercent}% ({activeAnalysis.remainingUsableCapacityKwh} kWh)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Warranted Cycles:</span>
+                <span className="text-slate-300 font-bold">{activeAnalysis.warrantedCycleLimit.toLocaleString()} cycles</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Cycle Exhaustion:</span>
+                <span className={activeAnalysis.warrantedCycleExhaustionYear ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'}>
+                  {activeAnalysis.warrantedCycleExhaustionYear ? `Year ${activeAnalysis.warrantedCycleExhaustionYear}` : '>25 Years'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] text-slate-400 block font-mono">
+              Discharged: {activeAnalysis.totalLifetimeDischargedKwh.toLocaleString()} 25-year kWh
             </span>
-            <span className="text-[10px] font-mono text-amber-300">25y LCOS: ${lcosPerKwh}/kWh</span>
           </div>
-          <p className="text-[11px] text-slate-400">
-            25-Year degradation fade & manufacturer warranty tracking:
-          </p>
-          <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Year 25 End-of-Life SoH:</span>
-              <span className="text-cyan-300 font-bold">{endOfLifeSohPercent}% ({remainingUsableCapacityKwh} kWh)</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Warranted Cycles:</span>
-              <span className="text-slate-300 font-bold">{warrantedCycleLimit.toLocaleString()} cycles</span>
-            </div>
-            <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">Cycle Exhaustion:</span>
-              <span className={warrantedCycleExhaustionYear ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'}>
-                {warrantedCycleExhaustionYear ? `Year ${warrantedCycleExhaustionYear}` : '>25 Years'}
+
+          {/* Panel 4: Outage Autonomy & Value of Lost Load */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                25-Year Resilience & VOLL
               </span>
+              <span className="text-[10px] font-mono text-emerald-400">+{activeAnalysis.outageAutonomyHours}h Autonomy</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Blackout protection at {activeAnalysis.criticalLoadPowerKw} kW critical demand:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Backup Duration:</span>
+                <span className="text-amber-300 font-bold">{activeAnalysis.outageAutonomyHours}h ({activeAnalysis.outageAutonomyDays} days)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Annual VOLL:</span>
+                <span className="text-emerald-400 font-bold">+${activeAnalysis.annualResilienceValue}/yr</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">25-Year Resilience Value:</span>
+                <span className="text-cyan-300 font-bold">+${activeAnalysis.lifetimeResilienceValue.toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">Blend VOLL into ROI:</span>
+              <button
+                onClick={() => setIncludeVollInMetrics(!includeVollInMetrics)}
+                className={`px-1.5 py-0.5 rounded font-mono font-semibold transition-colors ${includeVollInMetrics ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}
+              >
+                {includeVollInMetrics ? 'Active (Blended)' : 'Off (Pure Utility)'}
+              </button>
             </div>
           </div>
-          <span className="text-[10px] text-slate-400 block font-mono">
-            Discharged: {totalLifetimeDischargedKwh.toLocaleString()} 25-year kWh
-          </span>
         </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Panel A: Observed Period Energy Costs */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <DollarSign className="h-4 w-4 text-emerald-400" />
+                Observed Period Energy Costs
+              </span>
+              <span className="text-[10px] font-mono text-emerald-400">{partialMetrics.durationDays} Days Observed</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Actual electricity spending and bill reduction across the {partialMetrics.durationDays}-day uploaded dataset:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Baseline Cost:</span>
+                <span className="text-white font-bold">${partialMetrics.baselinePeriodCostUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">With Battery:</span>
+                <span className="text-cyan-300 font-bold">${partialMetrics.simulatedPeriodCostUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Observed Savings:</span>
+                <span className="text-emerald-400 font-bold">+${partialMetrics.periodSavingsUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] pt-0.5">
+              <span className="text-slate-400">Net Period Bill Reduction:</span>
+              <span className="font-bold text-emerald-400 font-mono">-{partialMetrics.savingsPercentage}% cut</span>
+            </div>
+          </div>
 
-        {/* Panel 4: Outage Autonomy & Value of Lost Load */}
-        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              25-Year Resilience & VOLL
+          {/* Panel B: Observed Battery Operation */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <BatteryCharging className="h-4 w-4 text-cyan-400" />
+                Battery Operation — Observed Period
+              </span>
+              <span className="text-[10px] font-mono text-cyan-300">{partialMetrics.durationDays} Days</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Simulated battery activity and energy throughput over the {partialMetrics.durationDays}-day period:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Total Home Load:</span>
+                <span className="text-white font-bold">{partialMetrics.totalHomeLoadKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Grid Import:</span>
+                <span className="text-slate-200 font-bold">{partialMetrics.gridImportKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Grid Export:</span>
+                <span className="text-slate-200 font-bold">{partialMetrics.gridExportKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Battery Discharged:</span>
+                <span className="text-cyan-300 font-bold">{partialMetrics.batteryDischargedKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Equivalent Cycles:</span>
+                <span className="text-emerald-400 font-bold">{partialMetrics.equivalentFullCycles} cycles</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Peak Demand:</span>
+                <span className="text-amber-300 font-bold">{partialMetrics.peakDemandKw} kW</span>
+              </div>
+            </div>
+            <span className="text-[10px] text-slate-400 block font-mono">
+              Observed throughput over {partialMetrics.durationDays} days · Long-term degradation and LCOS require annual dataset
             </span>
-            <span className="text-[10px] font-mono text-emerald-400">+{outageAutonomyHours}h Autonomy</span>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            Blackout protection at {criticalLoadPowerKw} kW critical demand:
-          </p>
-          <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Backup Duration:</span>
-              <span className="text-amber-300 font-bold">{outageAutonomyHours}h ({outageAutonomyDays} days)</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Annual VOLL:</span>
-              <span className="text-emerald-400 font-bold">+${annualResilienceValue}/yr</span>
-            </div>
-            <div className="flex justify-between pt-1 border-t border-slate-800">
-              <span className="text-slate-400">25-Year Resilience Value:</span>
-              <span className="text-cyan-300 font-bold">+${lifetimeResilienceValue.toLocaleString()}</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between text-[10px]">
-            <span className="text-slate-400">Blend VOLL into ROI:</span>
-            <button
-              onClick={() => setIncludeVollInMetrics(!includeVollInMetrics)}
-              className={`px-1.5 py-0.5 rounded font-mono font-semibold transition-colors ${includeVollInMetrics ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}
-            >
-              {includeVollInMetrics ? 'Active (Blended)' : 'Off (Pure Utility)'}
-            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {/* VISUALIZATION 1: INTERACTIVE CROSSOVER CHART WITH LEFT-SIDE CONTROL PANEL */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
@@ -1173,15 +1273,15 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            {hasBreakeven && (
+            {hasFinancialAnalysis && activeAnalysis && hasBreakeven && (
               <div className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold font-mono flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                <span>Crossover Breakeven: {paybackFormatted}</span>
+                <span>Crossover Breakeven: {activeAnalysis.paybackFormatted}</span>
               </div>
             )}
-            {hasReplacementInHorizon && (
+            {hasFinancialAnalysis && activeAnalysis && hasReplacementInHorizon && (
               <div className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-mono">
-                Yr {replacementYear} Inverter Reserve: -${replacementCostTotal.toLocaleString()}
+                Yr {activeAnalysis.replacementYear} Inverter Reserve: -${activeAnalysis.replacementCostTotal.toLocaleString()}
               </div>
             )}
           </div>

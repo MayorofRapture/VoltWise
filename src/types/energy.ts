@@ -365,3 +365,19 @@ export interface CsvValidationResult {
   schemaDetected?: 'standard_5col' | 'legacy_2col';
   completeness?: DatasetCompleteness;
 }
+
+export interface PartialPeriodDisplayMetrics {
+  configuredInstalledCostUsd: number;
+  durationDays: number;
+  baselinePeriodCostUsd: number;
+  simulatedPeriodCostUsd: number;
+  periodSavingsUsd: number;
+  savingsPercentage: number;
+  totalHomeLoadKwh: number;
+  gridImportKwh: number;
+  gridExportKwh: number;
+  batteryDischargedKwh: number;
+  equivalentFullCycles: number;
+  peakDemandKw: number;
+}
+
