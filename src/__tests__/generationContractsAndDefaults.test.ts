@@ -13,6 +13,7 @@ import {
   DEFAULT_WIND_ASSET,
   DEFAULT_GENERATOR_ASSET,
   DEFAULT_GENERATION_CONFIG,
+  createDefaultGenerationConfig,
   createDefaultSolarAsset,
   createDefaultWindAsset,
   createDefaultGeneratorAsset,
@@ -30,71 +31,94 @@ import { generateRealistic8760Dataset } from '../utils/sampleData';
 import { parseAndValidateEnergyCsv } from '../utils/csvParser';
 
 describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
-  it('instantiates valid DEFAULT_GENERATION_SITE conforming to GenerationSite contract', () => {
+  it('instantiates neutral unconfigured DEFAULT_GENERATION_SITE', () => {
     const site: GenerationSite = DEFAULT_GENERATION_SITE;
-    expect(site.latitude).toBeGreaterThanOrEqual(-90);
-    expect(site.latitude).toBeLessThanOrEqual(90);
-    expect(site.longitude).toBeGreaterThanOrEqual(-180);
-    expect(site.longitude).toBeLessThanOrEqual(180);
-    expect(typeof site.timeZone).toBe('string');
-    expect(site.timeZone.length).toBeGreaterThan(0);
-    expect(site.elevationM === null || typeof site.elevationM === 'number').toBe(true);
+    expect(site.latitude).toBeNull();
+    expect(site.longitude).toBeNull();
+    expect(site.timeZone).toBe('');
+    expect(site.elevationM).toBeNull();
   });
 
-  it('instantiates valid DEFAULT_SOLAR_ASSET with exactly 12 monthly peak sun hours and solar discriminator', () => {
+  it('instantiates neutral DEFAULT_GENERATION_CONFIG with empty asset list', () => {
+    const config: GenerationConfig = DEFAULT_GENERATION_CONFIG;
+    expect(config.site.latitude).toBeNull();
+    expect(config.site.longitude).toBeNull();
+    expect(config.site.timeZone).toBe('');
+    expect(config.site.elevationM).toBeNull();
+    expect(config.assets).toEqual([]);
+    expect(config.assets.length).toBe(0);
+  });
+
+  it('createDefaultGenerationConfig returns fresh isolated unconfigured instances', () => {
+    const c1 = createDefaultGenerationConfig();
+    const c2 = createDefaultGenerationConfig();
+    expect(c1).not.toBe(c2);
+    expect(c1.site).not.toBe(c2.site);
+    expect(c1.assets).not.toBe(c2.assets);
+    expect(c1.assets).toEqual([]);
+    expect(c1.site.latitude).toBeNull();
+    expect(c1.site.longitude).toBeNull();
+    expect(c1.site.timeZone).toBe('');
+    expect(c1.site.elevationM).toBeNull();
+
+    c1.site.latitude = 40.0;
+    c1.assets.push(createDefaultSolarAsset());
+    expect(c2.site.latitude).toBeNull();
+    expect(c2.assets).toHaveLength(0);
+    expect(DEFAULT_GENERATION_CONFIG.assets).toHaveLength(0);
+  });
+
+  it('instantiates neutral DEFAULT_SOLAR_ASSET with zero costs and 12-month zero solar resource data', () => {
     const solar: SolarGenerationAsset = DEFAULT_SOLAR_ASSET;
     expect(solar.type).toBe('solar');
     expect(solar.enabled).toBe(true);
-    expect(solar.dcCapacityKw).toBeGreaterThan(0);
-    expect(solar.tiltDegrees).toBeGreaterThanOrEqual(0);
-    expect(solar.tiltDegrees).toBeLessThanOrEqual(90);
-    expect(solar.azimuthDegrees).toBeGreaterThanOrEqual(0);
-    expect(solar.azimuthDegrees).toBeLessThanOrEqual(359);
-    expect(solar.inverterAcCapacityKw).toBeGreaterThan(0);
-    expect(solar.inverterEfficiencyPercent).toBeGreaterThan(0);
-    expect(solar.inverterEfficiencyPercent).toBeLessThanOrEqual(100);
+    expect(solar.installedCostUsd).toBe(0);
+    expect(solar.annualMaintenanceCostUsd).toBe(0);
     expect(solar.monthlyPeakSunHoursPerDay).toHaveLength(12);
     solar.monthlyPeakSunHoursPerDay.forEach((hours) => {
-      expect(hours).toBeGreaterThanOrEqual(0);
+      expect(hours).toBe(0);
     });
   });
 
-  it('instantiates valid DEFAULT_WIND_ASSET with SI units, 12 monthly wind speeds and power curve points', () => {
+  it('instantiates neutral DEFAULT_WIND_ASSET with zero costs, null annual wind speed, zero monthly speeds, and empty power curve', () => {
     const wind: WindGenerationAsset = DEFAULT_WIND_ASSET;
     expect(wind.type).toBe('wind');
-    expect(wind.ratedPowerKw).toBeGreaterThan(0);
-    expect(wind.hubHeightM).toBeGreaterThan(0);
-    expect(wind.rotorDiameterM).toBeGreaterThan(0);
-    expect(wind.cutInWindSpeedMps).toBeLessThan(wind.ratedWindSpeedMps);
-    expect(wind.ratedWindSpeedMps).toBeLessThan(wind.cutOutWindSpeedMps);
+    expect(wind.installedCostUsd).toBe(0);
+    expect(wind.annualMaintenanceCostUsd).toBe(0);
+    expect(wind.annualAverageWindSpeedMps).toBeNull();
     expect(wind.monthlyAverageWindSpeedMps).toHaveLength(12);
-    expect(wind.powerCurve.length).toBeGreaterThan(0);
-    wind.powerCurve.forEach((point) => {
-      expect(point.windSpeedMps).toBeGreaterThanOrEqual(0);
-      expect(point.outputKw).toBeGreaterThanOrEqual(0);
+    wind.monthlyAverageWindSpeedMps.forEach((speed) => {
+      expect(speed).toBe(0);
     });
+    expect(wind.powerCurve).toEqual([]);
   });
 
-  it('instantiates valid DEFAULT_GENERATOR_ASSET with fuel type, units, dispatch mode and fuel curve points', () => {
+  it('instantiates neutral DEFAULT_GENERATOR_ASSET with zero costs, null fuel price, and empty fuel curve', () => {
     const generator: GeneratorGenerationAsset = DEFAULT_GENERATOR_ASSET;
     expect(generator.type).toBe('generator');
-    expect(generator.ratedContinuousKw).toBeGreaterThan(0);
-    expect(generator.minimumStableLoadPercent).toBeGreaterThanOrEqual(0);
-    expect(generator.minimumStableLoadPercent).toBeLessThanOrEqual(100);
+    expect(generator.installedCostUsd).toBe(0);
+    expect(generator.annualMaintenanceCostUsd).toBe(0);
+    expect(generator.fuelCostPerUnit).toBeNull();
+    expect(generator.fuelCurve).toEqual([]);
     expect(['natural_gas', 'propane', 'gasoline', 'diesel', 'custom']).toContain(generator.fuelType);
     expect(['gallon', 'therm', 'ccf', 'mmbtu', 'custom']).toContain(generator.fuelUnit);
     expect(['standby', 'scheduled', 'economic']).toContain(generator.dispatchMode);
-    expect(generator.fuelCostPerUnit).toBeGreaterThan(0);
-    expect(generator.fuelCurve.length).toBeGreaterThan(0);
-    generator.fuelCurve.forEach((point) => {
-      expect(point.loadPercent).toBeGreaterThanOrEqual(0);
-      expect(point.loadPercent).toBeLessThanOrEqual(100);
-      expect(point.fuelUnitsPerHour).toBeGreaterThanOrEqual(0);
-    });
   });
 
-  it('properly discriminates assets in GenerationConfig', () => {
-    const config: GenerationConfig = DEFAULT_GENERATION_CONFIG;
+  it('properly discriminates assets in GenerationConfig when populated', () => {
+    const config: GenerationConfig = {
+      site: {
+        latitude: 37.77,
+        longitude: -122.42,
+        timeZone: 'America/Los_Angeles',
+        elevationM: 16,
+      },
+      assets: [
+        createDefaultSolarAsset(),
+        createDefaultWindAsset(),
+        createDefaultGeneratorAsset(),
+      ],
+    };
     expect(config.assets.length).toBe(3);
 
     const solar = config.assets.find((a): a is SolarGenerationAsset => a.type === 'solar');
@@ -102,13 +126,13 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
     const generator = config.assets.find((a): a is GeneratorGenerationAsset => a.type === 'generator');
 
     expect(solar).toBeDefined();
-    expect(solar?.dcCapacityKw).toBe(8.0);
+    expect(solar?.type).toBe('solar');
 
     expect(wind).toBeDefined();
-    expect(wind?.ratedPowerKw).toBe(5.0);
+    expect(wind?.type).toBe('wind');
 
     expect(generator).toBeDefined();
-    expect(generator?.ratedContinuousKw).toBe(10.0);
+    expect(generator?.type).toBe('generator');
   });
 
   it('factory functions generate isolated instances with unique IDs', () => {
@@ -116,18 +140,20 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
     const s2 = createDefaultSolarAsset('Second Solar Array');
     expect(s1.id).not.toBe(s2.id);
     expect(s2.name).toBe('Second Solar Array');
-    s1.monthlyPeakSunHoursPerDay[0] = 99.9;
-    expect(s2.monthlyPeakSunHoursPerDay[0]).not.toBe(99.9);
+    s1.monthlyPeakSunHoursPerDay[0] = 5.5;
+    expect(s2.monthlyPeakSunHoursPerDay[0]).not.toBe(5.5);
 
     const w1 = createDefaultWindAsset();
     const w2 = createDefaultWindAsset();
     expect(w1.id).not.toBe(w2.id);
-    w1.powerCurve[0].outputKw = 42;
-    expect(w2.powerCurve[0].outputKw).not.toBe(42);
+    w1.powerCurve.push({ windSpeedMps: 10, outputKw: 5 });
+    expect(w2.powerCurve).toHaveLength(0);
 
     const g1 = createDefaultGeneratorAsset();
     const g2 = createDefaultGeneratorAsset();
     expect(g1.id).not.toBe(g2.id);
+    g1.fuelCurve.push({ loadPercent: 50, fuelUnitsPerHour: 1.2 });
+    expect(g2.fuelCurve).toHaveLength(0);
 
     const genericAsset = createDefaultAsset('solar');
     expect(genericAsset.type).toBe('solar');

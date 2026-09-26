@@ -11,10 +11,10 @@ import {
 } from '../types/energy';
 
 export const DEFAULT_GENERATION_SITE: GenerationSite = {
-  latitude: 37.7749,
-  longitude: -122.4194,
-  timeZone: 'America/Los_Angeles',
-  elevationM: 16,
+  latitude: null,
+  longitude: null,
+  timeZone: '',
+  elevationM: null,
 };
 
 export const DEFAULT_SOLAR_ASSET: SolarGenerationAsset = {
@@ -22,103 +22,71 @@ export const DEFAULT_SOLAR_ASSET: SolarGenerationAsset = {
   name: 'Rooftop Solar PV Array',
   enabled: true,
   type: 'solar',
-  installedCostUsd: 18000,
-  annualMaintenanceCostUsd: 150,
+  installedCostUsd: 0,
+  annualMaintenanceCostUsd: 0,
 
-  dcCapacityKw: 8.0,
-  tiltDegrees: 25,
+  dcCapacityKw: 0,
+  tiltDegrees: 20,
   azimuthDegrees: 180, // South
 
-  inverterAcCapacityKw: 7.6,
-  inverterEfficiencyPercent: 97.0,
+  inverterAcCapacityKw: 0,
+  inverterEfficiencyPercent: 96.0,
 
   systemLossPercent: 14.0,
-  shadingLossPercent: 3.0,
+  shadingLossPercent: 0,
 
   annualDegradationPercent: 0.5,
 
   resourceMode: 'monthly_peak_sun_hours',
-  monthlyPeakSunHoursPerDay: [
-    3.2, // Jan
-    3.9, // Feb
-    5.1, // Mar
-    6.0, // Apr
-    6.8, // May
-    7.2, // Jun
-    7.4, // Jul
-    6.9, // Aug
-    5.8, // Sep
-    4.5, // Oct
-    3.5, // Nov
-    2.9, // Dec
-  ],
+  monthlyPeakSunHoursPerDay: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 };
 
 export const DEFAULT_WIND_ASSET: WindGenerationAsset = {
   id: 'wind-default',
-  name: 'Residential Micro Wind Turbine',
+  name: 'Residential Wind Turbine',
   enabled: false,
   type: 'wind',
-  installedCostUsd: 12000,
-  annualMaintenanceCostUsd: 300,
+  installedCostUsd: 0,
+  annualMaintenanceCostUsd: 0,
 
-  ratedPowerKw: 5.0,
-  hubHeightM: 12,
-  rotorDiameterM: 4.5,
+  ratedPowerKw: 0,
+  hubHeightM: 10,
+  rotorDiameterM: 0,
 
-  cutInWindSpeedMps: 2.5,
-  ratedWindSpeedMps: 11.0,
-  cutOutWindSpeedMps: 20.0,
+  cutInWindSpeedMps: 0,
+  ratedWindSpeedMps: 0,
+  cutOutWindSpeedMps: 0,
 
-  availabilityPercent: 95.0,
-  systemLossPercent: 8.0,
+  availabilityPercent: 100.0,
+  systemLossPercent: 0,
 
   resourceMode: 'annual_average',
 
   measurementHeightM: 10,
-  windShearExponent: 0.2,
+  windShearExponent: 0.14,
 
-  annualAverageWindSpeedMps: 4.8,
-  monthlyAverageWindSpeedMps: [
-    4.5, 4.8, 5.2, 5.5, 5.3, 4.9,
-    4.4, 4.2, 4.5, 4.7, 4.9, 4.6,
-  ],
+  annualAverageWindSpeedMps: null,
+  monthlyAverageWindSpeedMps: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 
-  powerCurve: [
-    { windSpeedMps: 0.0, outputKw: 0.0 },
-    { windSpeedMps: 2.5, outputKw: 0.0 },
-    { windSpeedMps: 4.0, outputKw: 0.4 },
-    { windSpeedMps: 6.0, outputKw: 1.2 },
-    { windSpeedMps: 8.0, outputKw: 2.6 },
-    { windSpeedMps: 10.0, outputKw: 4.3 },
-    { windSpeedMps: 11.0, outputKw: 5.0 },
-    { windSpeedMps: 15.0, outputKw: 5.0 },
-    { windSpeedMps: 20.0, outputKw: 5.0 },
-  ],
+  powerCurve: [],
 };
 
 export const DEFAULT_GENERATOR_ASSET: GeneratorGenerationAsset = {
   id: 'generator-default',
-  name: 'Standby Natural Gas Generator',
+  name: 'Standby Generator',
   enabled: false,
   type: 'generator',
-  installedCostUsd: 8500,
-  annualMaintenanceCostUsd: 250,
+  installedCostUsd: 0,
+  annualMaintenanceCostUsd: 0,
 
-  ratedContinuousKw: 10.0,
-  minimumStableLoadPercent: 20.0,
+  ratedContinuousKw: 0,
+  minimumStableLoadPercent: 0,
 
   fuelType: 'natural_gas',
   fuelUnit: 'therm',
-  fuelCostPerUnit: 1.45,
+  fuelCostPerUnit: null,
 
-  fuelCurve: [
-    { loadPercent: 0, fuelUnitsPerHour: 0.4 },
-    { loadPercent: 25, fuelUnitsPerHour: 0.9 },
-    { loadPercent: 50, fuelUnitsPerHour: 1.4 },
-    { loadPercent: 75, fuelUnitsPerHour: 1.9 },
-    { loadPercent: 100, fuelUnitsPerHour: 2.5 },
-  ],
+  fuelCurve: [],
 
   dispatchMode: 'standby',
 
@@ -128,12 +96,20 @@ export const DEFAULT_GENERATOR_ASSET: GeneratorGenerationAsset = {
 
 export const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
   site: DEFAULT_GENERATION_SITE,
-  assets: [
-    DEFAULT_SOLAR_ASSET,
-    DEFAULT_WIND_ASSET,
-    DEFAULT_GENERATOR_ASSET,
-  ],
+  assets: [],
 };
+
+export function createDefaultGenerationConfig(): GenerationConfig {
+  return {
+    site: {
+      latitude: null,
+      longitude: null,
+      timeZone: '',
+      elevationM: null,
+    },
+    assets: [],
+  };
+}
 
 let nextAssetIdCounter = 1;
 

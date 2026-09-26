@@ -32,7 +32,7 @@ import {
   getHeaderSavingsLabel,
   getHeaderPaybackText,
 } from './utils/simulationEngine';
-import { DEFAULT_GENERATION_CONFIG } from './utils/generationDefaults';
+import { DEFAULT_GENERATION_CONFIG, createDefaultGenerationConfig } from './utils/generationDefaults';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
 import { Zap, ChevronRight, Activity, ArrowRight, Bookmark } from 'lucide-react';
@@ -51,7 +51,7 @@ export default function App() {
   const [activeProfileId, setActiveProfileId] = useState<string>('powerwall-3');
 
   // Power Generation Assets & Site Config (Milestone G1)
-  const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(DEFAULT_GENERATION_CONFIG);
+  const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(createDefaultGenerationConfig);
 
   // Macro Financials
   const [financials, setFinancials] = useState<MacroFinancials>(DEFAULT_MACRO_FINANCIALS);
@@ -98,7 +98,7 @@ export default function App() {
     setScheduleMatrix(DEFAULT_TOU_PROFILES[0].scheduleMatrix);
     setProfiles(DEFAULT_BATTERY_PROFILES);
     setActiveProfileId('powerwall-3');
-    setGenerationConfig(DEFAULT_GENERATION_CONFIG);
+    setGenerationConfig(createDefaultGenerationConfig());
     setFinancials(DEFAULT_MACRO_FINANCIALS);
     setActiveTab('data');
   };

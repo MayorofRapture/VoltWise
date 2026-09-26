@@ -35,6 +35,7 @@ import {
 import {
   createDefaultAsset,
   DEFAULT_GENERATION_CONFIG,
+  createDefaultGenerationConfig,
 } from '../utils/generationDefaults';
 
 const MONTH_NAMES = [
@@ -148,8 +149,8 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
   const handleDeleteAsset = (id: string) => {
     setGenerationConfig((prev) => {
       const filtered = prev.assets.filter((a) => a.id !== id);
-      if (selectedAssetId === id && filtered.length > 0) {
-        setSelectedAssetId(filtered[0].id);
+      if (selectedAssetId === id) {
+        setSelectedAssetId(filtered[0]?.id || '');
       }
       return {
         ...prev,
@@ -160,8 +161,8 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
 
   // Reset to default
   const handleResetToDefault = () => {
-    setGenerationConfig(DEFAULT_GENERATION_CONFIG);
-    setSelectedAssetId(DEFAULT_GENERATION_CONFIG.assets[0].id);
+    setGenerationConfig(createDefaultGenerationConfig());
+    setSelectedAssetId('');
   };
 
   return (
@@ -568,12 +569,13 @@ const SolarAssetConfigurator: React.FC<SolarConfiguratorProps> = ({ asset, onUpd
             </label>
             <input
               type="number"
-              min="0.1"
+              min="0"
               step="0.1"
               value={asset.dcCapacityKw}
               onChange={(e) =>
-                onUpdate({ dcCapacityKw: Math.max(0.1, parseFloat(e.target.value) || 0) })
+                onUpdate({ dcCapacityKw: Math.max(0, parseFloat(e.target.value) || 0) })
               }
+              placeholder="0.0"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-amber-500"
             />
           </div>
@@ -585,12 +587,13 @@ const SolarAssetConfigurator: React.FC<SolarConfiguratorProps> = ({ asset, onUpd
             </label>
             <input
               type="number"
-              min="0.1"
+              min="0"
               step="0.1"
               value={asset.inverterAcCapacityKw}
               onChange={(e) =>
-                onUpdate({ inverterAcCapacityKw: Math.max(0.1, parseFloat(e.target.value) || 0) })
+                onUpdate({ inverterAcCapacityKw: Math.max(0, parseFloat(e.target.value) || 0) })
               }
+              placeholder="0.0"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-amber-500"
             />
           </div>
@@ -877,12 +880,13 @@ const WindAssetConfigurator: React.FC<WindConfiguratorProps> = ({ asset, onUpdat
             </label>
             <input
               type="number"
-              min="0.1"
+              min="0"
               step="0.1"
               value={asset.ratedPowerKw}
               onChange={(e) =>
-                onUpdate({ ratedPowerKw: Math.max(0.1, parseFloat(e.target.value) || 0) })
+                onUpdate({ ratedPowerKw: Math.max(0, parseFloat(e.target.value) || 0) })
               }
+              placeholder="0.0"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-sky-500"
             />
           </div>
@@ -1182,42 +1186,48 @@ const WindAssetConfigurator: React.FC<WindConfiguratorProps> = ({ asset, onUpdat
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-850">
-              {asset.powerCurve.map((point, idx) => (
-                <tr key={idx} className="hover:bg-slate-900/50">
-                  <td className="py-1.5 pr-4">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={point.windSpeedMps}
-                      onChange={(e) =>
-                        handleUpdateCurvePoint(
-                          idx,
-                          'windSpeedMps',
-                          Math.max(0, parseFloat(e.target.value) || 0)
-                        )
-                      }
-                      className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-sky-500"
-                    />
+              {asset.powerCurve.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="py-6 text-center text-slate-500 font-sans text-xs">
+                    No power curve points configured. Click &ldquo;Add Point&rdquo; to enter wind speed vs. output power data.
                   </td>
-                  <td className="py-1.5 pr-4">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={point.outputKw}
-                      onChange={(e) =>
-                        handleUpdateCurvePoint(
-                          idx,
-                          'outputKw',
-                          Math.max(0, parseFloat(e.target.value) || 0)
-                        )
-                      }
-                      className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-sky-500"
-                    />
-                  </td>
-                  <td className="py-1.5 text-right">
-                    {asset.powerCurve.length > 2 && (
+                </tr>
+              ) : (
+                asset.powerCurve.map((point, idx) => (
+                  <tr key={idx} className="hover:bg-slate-900/50">
+                    <td className="py-1.5 pr-4">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={point.windSpeedMps}
+                        onChange={(e) =>
+                          handleUpdateCurvePoint(
+                            idx,
+                            'windSpeedMps',
+                            Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
+                        className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-sky-500"
+                      />
+                    </td>
+                    <td className="py-1.5 pr-4">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={point.outputKw}
+                        onChange={(e) =>
+                          handleUpdateCurvePoint(
+                            idx,
+                            'outputKw',
+                            Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
+                        className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-sky-500"
+                      />
+                    </td>
+                    <td className="py-1.5 text-right">
                       <button
                         onClick={() => handleDeleteCurvePoint(idx)}
                         className="text-slate-500 hover:text-rose-400 p-1 transition-colors"
@@ -1225,10 +1235,10 @@ const WindAssetConfigurator: React.FC<WindConfiguratorProps> = ({ asset, onUpdat
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1295,14 +1305,15 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
             </label>
             <input
               type="number"
-              min="0.5"
+              min="0"
               step="0.5"
               value={asset.ratedContinuousKw}
               onChange={(e) =>
                 onUpdate({
-                  ratedContinuousKw: Math.max(0.5, parseFloat(e.target.value) || 0),
+                  ratedContinuousKw: Math.max(0, parseFloat(e.target.value) || 0),
                 })
               }
+              placeholder="0.0"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-purple-500"
             />
           </div>
@@ -1383,12 +1394,13 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
                 type="number"
                 min="0"
                 step="0.05"
-                value={asset.fuelCostPerUnit}
+                value={asset.fuelCostPerUnit ?? ''}
                 onChange={(e) =>
                   onUpdate({
-                    fuelCostPerUnit: Math.max(0, parseFloat(e.target.value) || 0),
+                    fuelCostPerUnit: e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0),
                   })
                 }
+                placeholder="0.00"
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-purple-500"
               />
             </div>
@@ -1488,43 +1500,49 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-850">
-              {asset.fuelCurve.map((point, idx) => (
-                <tr key={idx} className="hover:bg-slate-900/50">
-                  <td className="py-1.5 pr-4">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="5"
-                      value={point.loadPercent}
-                      onChange={(e) =>
-                        handleUpdateFuelPoint(
-                          idx,
-                          'loadPercent',
-                          Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))
-                        )
-                      }
-                      className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-purple-500"
-                    />
+              {asset.fuelCurve.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="py-6 text-center text-slate-500 font-sans text-xs">
+                    No fuel consumption curve points configured. Click &ldquo;Add Point&rdquo; to define load vs. fuel burn.
                   </td>
-                  <td className="py-1.5 pr-4">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={point.fuelUnitsPerHour}
-                      onChange={(e) =>
-                        handleUpdateFuelPoint(
-                          idx,
-                          'fuelUnitsPerHour',
-                          Math.max(0, parseFloat(e.target.value) || 0)
-                        )
-                      }
-                      className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-purple-500"
-                    />
-                  </td>
-                  <td className="py-1.5 text-right">
-                    {asset.fuelCurve.length > 2 && (
+                </tr>
+              ) : (
+                asset.fuelCurve.map((point, idx) => (
+                  <tr key={idx} className="hover:bg-slate-900/50">
+                    <td className="py-1.5 pr-4">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={point.loadPercent}
+                        onChange={(e) =>
+                          handleUpdateFuelPoint(
+                            idx,
+                            'loadPercent',
+                            Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))
+                          )
+                        }
+                        className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-purple-500"
+                      />
+                    </td>
+                    <td className="py-1.5 pr-4">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={point.fuelUnitsPerHour}
+                        onChange={(e) =>
+                          handleUpdateFuelPoint(
+                            idx,
+                            'fuelUnitsPerHour',
+                            Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
+                        className="w-28 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-100 focus:outline-none focus:border-purple-500"
+                      />
+                    </td>
+                    <td className="py-1.5 text-right">
                       <button
                         onClick={() => handleDeleteFuelPoint(idx)}
                         className="text-slate-500 hover:text-rose-400 p-1 transition-colors"
@@ -1532,10 +1550,10 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

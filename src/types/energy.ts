@@ -495,7 +495,7 @@ export interface GeneratorGenerationAsset extends GenerationAssetBase {
 
   fuelType: GeneratorFuelType;
   fuelUnit: GeneratorFuelUnit;
-  fuelCostPerUnit: number;
+  fuelCostPerUnit: number | null;
 
   fuelCurve: GeneratorFuelCurvePoint[];
 
