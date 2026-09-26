@@ -520,3 +520,34 @@ export interface GenerationConfig {
   assets: GenerationAsset[];
 }
 
+// ============================================================================
+// Solar Physics Modeling Types (Milestone G2A)
+// ============================================================================
+
+export interface SolarPosition {
+  elevationDegrees: number;
+  zenithDegrees: number;
+  azimuthDegrees: number;
+  isDaylight: boolean;
+}
+
+export interface SolarIntervalGenerationResult {
+  timestampUtc: string;
+
+  position: SolarPosition;
+
+  clearSkyGhiKwPerM2: number;
+  clearSkyDniKwPerM2: number;
+  planeOfArrayIrradianceKwPerM2: number;
+
+  rawDcPowerKw: number;
+  dcPowerAfterLossesKw: number;
+
+  unclippedAcPowerKw: number;
+  acPowerKw: number;
+
+  dcEnergyKwh: number;
+  acEnergyKwh: number;
+  clippedEnergyKwh: number;
+}
+
