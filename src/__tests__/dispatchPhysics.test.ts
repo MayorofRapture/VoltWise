@@ -316,4 +316,239 @@ describe('Dispatch Physics & Bounds Regressions', () => {
       });
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Group D: Power Limits, Round-Trip Efficiency & Economic Sanity
+  // --------------------------------------------------------------------------
+  describe('Group D — Power Limits, RTE & Economic Invariants', () => {
+    it('Item 1: respects charge-power limit with square-root efficiency over 15-minute interval', () => {
+      // intervalHours = 0.25, maxContinuousChargeKw = 4, RTE = 81%
+      // etaCharge = sqrt(0.81) = 0.9
+      // max stored energy = 4 kW * 0.25 h * 0.9 = 0.9 kWh
+      const batteryProfile: BatteryProfile = {
+        id: 'charge-power-bat',
+        name: 'Charge Power Battery',
+        model: '20 kWh',
+        totalCapacityKwh: 20,
+        usableDodPercent: 100, // usable 20 kWh, starts at 10 kWh synthetic SOC, plenty of headroom
+        maxContinuousOutputKw: 4,
+        maxContinuousChargeKw: 4,
+        roundTripEfficiencyPercent: 81,
+        ratedCycleLife: 4000,
+        installedCost: 10000,
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['peak'],
+        allowGridExport: false,
+      };
+
+      const points: IntervalDataPoint[] = [
+        {
+          timestamp: '2025-01-01 02:00',
+          date: new Date('2025-01-01T02:00:00Z'),
+          hour: 2, // Off-peak (charge tier)
+          dayOfWeek: 3,
+          month: 0,
+          usageKwh: 0.5,
+        },
+      ];
+
+      const result = runAnnualSimulation(points, 0.25, tiers, scheduleMatrix, batteryProfile);
+      const interval = result.intervalResults[0];
+
+      expect(interval.batteryChargeKwh).toBeCloseTo(0.9, 4);
+      expect(interval.batteryChargeKwh).toBeLessThanOrEqual(0.9 + 1e-6);
+    });
+
+    it('Item 2: respects discharge-power limit over 15-minute interval', () => {
+      // intervalHours = 0.25, maxContinuousOutputKw = 4 kW
+      // Maximum AC energy output = 4 kW * 0.25 h = 1.0 kWh
+      const batteryProfile: BatteryProfile = {
+        id: 'discharge-power-bat',
+        name: 'Discharge Power Battery',
+        model: '10 kWh',
+        totalCapacityKwh: 10,
+        usableDodPercent: 100,
+        maxContinuousOutputKw: 4,
+        maxContinuousChargeKw: 4,
+        roundTripEfficiencyPercent: 81,
+        ratedCycleLife: 4000,
+        installedCost: 8000,
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['peak'],
+        allowGridExport: false,
+      };
+
+      const points: IntervalDataPoint[] = [
+        {
+          timestamp: '2025-01-01 17:00',
+          date: new Date('2025-01-01T17:00:00Z'),
+          hour: 17, // Peak (discharge tier)
+          dayOfWeek: 3,
+          month: 0,
+          usageKwh: 5.0, // High demand demanding maximum discharge
+        },
+      ];
+
+      const result = runAnnualSimulation(points, 0.25, tiers, scheduleMatrix, batteryProfile);
+      const interval = result.intervalResults[0];
+
+      expect(interval.batteryDischargeKwh).toBeCloseTo(1.0, 4);
+      expect(interval.batteryDischargeKwh).toBeLessThanOrEqual(1.0 + 1e-6);
+    });
+
+    it('Item 3: verifies closed-cycle round-trip efficiency of 81% (0.9 charge * 0.9 discharge)', () => {
+      const batteryProfile: BatteryProfile = {
+        id: 'rte-test-bat',
+        name: 'RTE Battery',
+        model: '10 kWh',
+        totalCapacityKwh: 10,
+        usableDodPercent: 100,
+        maxContinuousOutputKw: 10,
+        maxContinuousChargeKw: 10,
+        roundTripEfficiencyPercent: 81, // etaCharge = 0.9, etaDischarge = 0.9
+        ratedCycleLife: 4000,
+        installedCost: 8000,
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['peak'],
+        allowGridExport: false,
+      };
+
+      // Interval 0 (Bootstrap): Hour 17 (Peak), large load = 10 kWh to exhaust 5.0 kWh synthetic starting SOC.
+      // Available AC from 5 kWh DC synthetic: 5 * 0.9 = 4.5 kWh AC. Battery drained to 0.
+      // Interval 1 (Grid-Charge): Hour 2 (Off-peak), load = 0, charges 10 kW * 1 h * 0.9 = 9.0 kWh stored.
+      // Grid AC consumed for battery = 9.0 / 0.9 = 10.0 kWh.
+      // Interval 2 (Discharge): Hour 17 (Peak), load = 10 kWh.
+      // Available AC from 9 kWh DC: 9.0 * 0.9 = 8.1 kWh AC.
+      const points: IntervalDataPoint[] = [
+        {
+          timestamp: '2025-01-01 17:00',
+          date: new Date('2025-01-01T17:00:00Z'),
+          hour: 17,
+          dayOfWeek: 3,
+          month: 0,
+          usageKwh: 10.0,
+        },
+        {
+          timestamp: '2025-01-02 02:00',
+          date: new Date('2025-01-02T02:00:00Z'),
+          hour: 2,
+          dayOfWeek: 4,
+          month: 0,
+          usageKwh: 0,
+        },
+        {
+          timestamp: '2025-01-02 17:00',
+          date: new Date('2025-01-02T17:00:00Z'),
+          hour: 17,
+          dayOfWeek: 4,
+          month: 0,
+          usageKwh: 10.0,
+        },
+      ];
+
+      const result = runAnnualSimulation(points, 1.0, tiers, scheduleMatrix, batteryProfile);
+
+      // Verify bootstrap interval exhausted synthetic starting SOC
+      expect(result.intervalResults[0].batterySocKwh).toBe(0);
+
+      // Interval 1: Grid charging
+      const chargeInterval = result.intervalResults[1];
+      const gridAcChargingInput = chargeInterval.gridImportKwh; // load is 0, so import is gridForBat
+      expect(gridAcChargingInput).toBeCloseTo(10.0, 4);
+      expect(chargeInterval.batteryChargeKwh).toBeCloseTo(9.0, 4);
+
+      // Interval 2: Discharging grid-charged energy
+      const dischargeInterval = result.intervalResults[2];
+      const acDischargeOutput = dischargeInterval.batteryDischargeKwh;
+      expect(acDischargeOutput).toBeCloseTo(8.1, 4);
+
+      // Round-trip efficiency across the closed grid-charged cycle:
+      const measuredRte = acDischargeOutput / gridAcChargingInput;
+      const expectedRte = 0.81;
+      expect(measuredRte).toBeCloseTo(expectedRte, 4);
+    });
+
+    it('Item 4: flat-rate economic sanity: closed grid-charged cycle with RTE < 100% must not create savings', () => {
+      // Same buy rate during charge and discharge ($0.30/kWh)
+      const flatTiers: RateTier[] = [
+        {
+          id: 'off-peak',
+          name: 'Flat Off-Peak',
+          buyRate: 0.30,
+          sellRate: 0.05,
+          color: '#10b981',
+        },
+        {
+          id: 'peak',
+          name: 'Flat Peak',
+          buyRate: 0.30, // Identical buy rate as off-peak
+          sellRate: 0.05,
+          color: '#ef4444',
+        },
+      ];
+
+      const batteryProfile: BatteryProfile = {
+        id: 'flat-rate-bat',
+        name: 'Flat Rate Battery',
+        model: '10 kWh',
+        totalCapacityKwh: 10,
+        usableDodPercent: 100,
+        maxContinuousOutputKw: 10,
+        maxContinuousChargeKw: 10,
+        roundTripEfficiencyPercent: 81, // 81% RTE introduces 19% energy losses
+        ratedCycleLife: 4000,
+        installedCost: 8000,
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['peak'],
+        allowGridExport: false,
+      };
+
+      // Interval 0: Bootstrap interval to exhaust initial synthetic 50% SOC
+      // Interval 1: Grid-charge at $0.30/kWh (10 kWh grid import = $3.00 cost, stores 9.0 kWh)
+      // Interval 2: Discharge at $0.30/kWh (delivers 8.1 kWh AC to offset $2.43 load)
+      const points: IntervalDataPoint[] = [
+        {
+          timestamp: '2025-01-01 17:00',
+          date: new Date('2025-01-01T17:00:00Z'),
+          hour: 17,
+          dayOfWeek: 3,
+          month: 0,
+          usageKwh: 10.0,
+        },
+        {
+          timestamp: '2025-01-02 02:00',
+          date: new Date('2025-01-02T02:00:00Z'),
+          hour: 2,
+          dayOfWeek: 4,
+          month: 0,
+          usageKwh: 0,
+        },
+        {
+          timestamp: '2025-01-02 17:00',
+          date: new Date('2025-01-02T17:00:00Z'),
+          hour: 17,
+          dayOfWeek: 4,
+          month: 0,
+          usageKwh: 10.0,
+        },
+      ];
+
+      const result = runAnnualSimulation(points, 1.0, flatTiers, scheduleMatrix, batteryProfile);
+
+      // Isolate the closed grid-charge and discharge intervals (intervals 1 and 2)
+      const closedCycleSavings =
+        result.intervalResults[1].netSavings + result.intervalResults[2].netSavings;
+
+      // Because buy rates are equal and RTE < 100%, conversion losses strictly produce negative savings:
+      // Interval 1: baseline = $0, simulated = $3.00, savings = -$3.00
+      // Interval 2: baseline = $3.00 (10 kWh * $0.30), simulated = 1.9 kWh grid * $0.30 = $0.57, savings = +$2.43
+      // Total net savings = -$3.00 + $2.43 = -$0.57
+      expect(closedCycleSavings).toBeLessThanOrEqual(0);
+      expect(closedCycleSavings).toBeCloseTo(-0.57, 2);
+    });
+  });
 });

@@ -164,4 +164,56 @@ describe('Selected-Horizon vs 25-Year Lifetime Financial Consistency', () => {
     expect(analysis.lifetimeNetProfit15Yr).not.toBe(p25.cumulativeCashFlow);
     expect(analysis.lifetimeTotalSavings15Yr).not.toBe(analysis.lifetimeTotalSavings);
   });
+
+  // Test 7 — 13A: payback inside selected horizon
+  it('13A: returns simplePaybackYears when payback occurs inside the selected horizon', () => {
+    // Fast payback profile: $6,000 cost, $1,500 annual savings => ~4-5 years payback
+    const fastProfile: BatteryProfile = {
+      ...profile,
+      installedCost: 6000,
+    };
+    const fastSummary: AnnualSimulationSummary = {
+      ...summary,
+      year1Savings: 1500,
+      baselineAnnualCost: 3000,
+      simulatedAnnualCost: 1500,
+    };
+
+    const analysis = calculate15YearFinancials(fastProfile, fastSummary, DEFAULT_MACRO_FINANCIALS);
+    expect(analysis.paybackYears).not.toBeNull();
+    expect(analysis.paybackYears!).toBeLessThan(15);
+
+    const horizon15 = deriveHorizonFinancialSummary(analysis, 15);
+    expect(horizon15.simplePaybackYears).not.toBeNull();
+    expect(horizon15.simplePaybackYears).toBe(analysis.paybackYears);
+  });
+
+  // Test 8 — 13B: payback outside selected horizon
+  it('13B: returns null for simplePaybackYears when full payback occurs after selected horizon', () => {
+    // Slow payback profile: $15,000 cost, $850 annual savings => payback ~18 years
+    const slowProfile: BatteryProfile = {
+      ...profile,
+      installedCost: 15000,
+    };
+    const slowSummary: AnnualSimulationSummary = {
+      ...summary,
+      year1Savings: 850,
+      baselineAnnualCost: 2500,
+      simulatedAnnualCost: 1650,
+    };
+
+    const analysis = calculate15YearFinancials(slowProfile, slowSummary, DEFAULT_MACRO_FINANCIALS);
+    expect(analysis.paybackYears).not.toBeNull();
+    expect(analysis.paybackYears!).toBeGreaterThan(15);
+    expect(analysis.paybackYears!).toBeLessThanOrEqual(25);
+
+    // Selected horizon = 15 years: payback is beyond horizon, so simplePaybackYears must be null
+    const horizon15 = deriveHorizonFinancialSummary(analysis, 15);
+    expect(horizon15.simplePaybackYears).toBeNull();
+
+    // In 25-year horizon, payback is within horizon
+    const horizon25 = deriveHorizonFinancialSummary(analysis, 25);
+    expect(horizon25.simplePaybackYears).not.toBeNull();
+    expect(horizon25.simplePaybackYears).toBe(analysis.paybackYears);
+  });
 });

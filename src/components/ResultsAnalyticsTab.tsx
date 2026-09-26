@@ -986,10 +986,14 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             <>
               <div className="flex items-baseline justify-between">
                 <span className="text-2xl font-bold text-amber-300 font-mono tabular-nums">
-                  {activeAnalysis.paybackFormatted}
+                  {horizonSummary?.simplePaybackYears !== null
+                    ? activeAnalysis.paybackFormatted
+                    : activeAnalysis.paybackYears !== null
+                    ? `Beyond ${projectionHorizon}-Year Horizon`
+                    : activeAnalysis.paybackFormatted}
                 </span>
                 <span className="text-xs font-mono font-bold text-cyan-300">
-                  {activeAnalysis.irrPercent !== null ? `IRR: ${activeAnalysis.irrPercent}%` : 'IRR: <0%'}
+                  {activeAnalysis.irrPercent !== null ? `25-Year IRR: ${activeAnalysis.irrPercent}%` : '25-Year IRR: <0%'}
                 </span>
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">

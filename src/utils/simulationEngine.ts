@@ -906,7 +906,7 @@ export function calculate15YearFinancials(
   // 3. Macro Rates
   const inflationRate = financials.annualElectricityInflationRate / 100;
   const degradationRate = financials.annualBatteryDegradationRate / 100;
-  const discountRate = (financials.discountRatePercent || 5.0) / 100;
+  const discountRate = (financials.discountRatePercent ?? 5.0) / 100;
 
   const replacementEnabled = financials.replacementEnabled;
   const replacementCost = replacementEnabled ? Math.max(0, financials.replacementCost) : 0;

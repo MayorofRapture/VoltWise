@@ -86,4 +86,60 @@ describe('Issue 6 — Financing & Deferred Tax Credit Realization', () => {
     expect(analysis2.projections[0].taxCreditInflow).toBe(0);
     expect(analysis2.projections[1].taxCreditInflow).toBe(taxCreditVal);
   });
+
+  it('Section 5: calculates exact 0% APR financing with zero interest and principal/term monthly payments', () => {
+    // Principal = $12,000, 0% down, 0 rebate -> principal = $12,000
+    // APR = 0%, Term = 10 years (120 months)
+    const zeroAprFinancials = {
+      ...DEFAULT_MACRO_FINANCIALS,
+      isFinanced: true,
+      loanAprPercent: 0,
+      loanTermYears: 10,
+      loanDownPaymentPercent: 0,
+      localRebateFlat: 0,
+      federalTaxCreditPercent: 0,
+    };
+
+    const analysis = calculate15YearFinancials(profile, summary, zeroAprFinancials);
+
+    expect(analysis.loanPrincipal).toBe(12000);
+    // 12000 / 120 = $100/mo
+    expect(analysis.monthlyLoanPayment).toBe(100.0);
+    expect(analysis.totalLoanInterestPaid).toBe(0);
+    expect(analysis.totalLoanPaymentLifetime).toBe(12000);
+  });
+
+  it('Section 6: verifies positive-APR financing against independent amortization formula to cents', () => {
+    // Loan: Principal = $10,000, APR = 6.99%, Term = 10 years (120 months)
+    const testProfile: BatteryProfile = {
+      ...profile,
+      installedCost: 10000,
+    };
+
+    const positiveAprFinancials = {
+      ...DEFAULT_MACRO_FINANCIALS,
+      isFinanced: true,
+      loanAprPercent: 6.99,
+      loanTermYears: 10,
+      loanDownPaymentPercent: 0,
+      localRebateFlat: 0,
+      federalTaxCreditPercent: 0,
+    };
+
+    const analysis = calculate15YearFinancials(testProfile, summary, positiveAprFinancials);
+
+    // Independent calculation:
+    // P = 10000, r = 0.0699 / 12, n = 120
+    const P = 10000;
+    const r = (6.99 / 100) / 12;
+    const n = 120;
+    const numerator = r * Math.pow(1 + r, n);
+    const denominator = Math.pow(1 + r, n) - 1;
+    const expectedMonthlyPayment = Math.round((P * (numerator / denominator)) * 100) / 100;
+    const expectedTotalInterest = Math.round(expectedMonthlyPayment * n - P);
+
+    expect(analysis.loanPrincipal).toBe(10000);
+    expect(analysis.monthlyLoanPayment).toBe(expectedMonthlyPayment);
+    expect(analysis.totalLoanInterestPaid).toBe(expectedTotalInterest);
+  });
 });
