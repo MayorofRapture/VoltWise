@@ -71,6 +71,10 @@ export const DEFAULT_WIND_ASSET: WindGenerationAsset = {
   powerCurve: [],
 };
 
+export function createEmptyGeneratorSchedule(): boolean[][] {
+  return Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => false));
+}
+
 export const DEFAULT_GENERATOR_ASSET: GeneratorGenerationAsset = {
   id: 'generator-default',
   name: 'Standby Generator',
@@ -84,7 +88,10 @@ export const DEFAULT_GENERATOR_ASSET: GeneratorGenerationAsset = {
 
   fuelType: 'natural_gas',
   fuelUnit: 'therm',
-  fuelCostPerUnit: null,
+  customFuelUnitLabel: '',
+
+  fuelPricePerUnit: 0,
+  variableMaintenanceCostPerHourUsd: 0,
 
   fuelCurve: [],
 
@@ -92,6 +99,8 @@ export const DEFAULT_GENERATOR_ASSET: GeneratorGenerationAsset = {
 
   allowBatteryCharging: true,
   allowGridExport: false,
+
+  scheduledHours: createEmptyGeneratorSchedule(),
 };
 
 export const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
@@ -111,46 +120,55 @@ export function createDefaultGenerationConfig(): GenerationConfig {
   };
 }
 
-let nextAssetIdCounter = 1;
-
-export function createDefaultSolarAsset(customName?: string): SolarGenerationAsset {
-  const count = nextAssetIdCounter++;
+export function createDefaultSolarAsset(
+  id: string,
+  name?: string
+): SolarGenerationAsset {
   return {
     ...DEFAULT_SOLAR_ASSET,
-    id: `solar-${Date.now()}-${count}`,
-    name: customName || `Solar Array ${count}`,
+    id,
+    name: name || 'Solar Array',
     monthlyPeakSunHoursPerDay: [...DEFAULT_SOLAR_ASSET.monthlyPeakSunHoursPerDay],
   };
 }
 
-export function createDefaultWindAsset(customName?: string): WindGenerationAsset {
-  const count = nextAssetIdCounter++;
+export function createDefaultWindAsset(
+  id: string,
+  name?: string
+): WindGenerationAsset {
   return {
     ...DEFAULT_WIND_ASSET,
-    id: `wind-${Date.now()}-${count}`,
-    name: customName || `Wind Turbine ${count}`,
+    id,
+    name: name || 'Wind Turbine',
     monthlyAverageWindSpeedMps: [...DEFAULT_WIND_ASSET.monthlyAverageWindSpeedMps],
     powerCurve: DEFAULT_WIND_ASSET.powerCurve.map((pt) => ({ ...pt })),
   };
 }
 
-export function createDefaultGeneratorAsset(customName?: string): GeneratorGenerationAsset {
-  const count = nextAssetIdCounter++;
+export function createDefaultGeneratorAsset(
+  id: string,
+  name?: string
+): GeneratorGenerationAsset {
   return {
     ...DEFAULT_GENERATOR_ASSET,
-    id: `generator-${Date.now()}-${count}`,
-    name: customName || `Generator ${count}`,
+    id,
+    name: name || 'Generator',
     fuelCurve: DEFAULT_GENERATOR_ASSET.fuelCurve.map((pt) => ({ ...pt })),
+    scheduledHours: createEmptyGeneratorSchedule(),
   };
 }
 
-export function createDefaultAsset(type: 'solar' | 'wind' | 'generator'): GenerationAsset {
+export function createDefaultAsset(
+  type: 'solar' | 'wind' | 'generator',
+  id: string,
+  name?: string
+): GenerationAsset {
   switch (type) {
     case 'solar':
-      return createDefaultSolarAsset();
+      return createDefaultSolarAsset(id, name);
     case 'wind':
-      return createDefaultWindAsset();
+      return createDefaultWindAsset(id, name);
     case 'generator':
-      return createDefaultGeneratorAsset();
+      return createDefaultGeneratorAsset(id, name);
   }
 }

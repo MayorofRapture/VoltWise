@@ -69,6 +69,14 @@ const InfoTooltip: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+function createAssetId(type: 'solar' | 'wind' | 'generator'): string {
+  const uuid =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : Math.random().toString(36).substring(2, 9);
+  return `${type}-${uuid}`;
+}
+
 interface PowerGenerationTabProps {
   generationConfig: GenerationConfig;
   setGenerationConfig: React.Dispatch<React.SetStateAction<GenerationConfig>>;
@@ -110,7 +118,8 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
 
   // Add asset
   const handleAddAsset = (type: 'solar' | 'wind' | 'generator') => {
-    const newAsset = createDefaultAsset(type);
+    const id = createAssetId(type);
+    const newAsset = createDefaultAsset(type, id);
     setGenerationConfig((prev) => ({
       ...prev,
       assets: [...prev.assets, newAsset],
@@ -120,9 +129,10 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
 
   // Duplicate asset
   const handleDuplicateAsset = (asset: GenerationAsset) => {
+    const newId = createAssetId(asset.type);
     const duplicate: GenerationAsset = {
       ...asset,
-      id: `${asset.type}-${Date.now()}`,
+      id: newId,
       name: `${asset.name} (Copy)`,
       ...(asset.type === 'solar'
         ? { monthlyPeakSunHoursPerDay: [...asset.monthlyPeakSunHoursPerDay] }
@@ -134,7 +144,10 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
           }
         : {}),
       ...(asset.type === 'generator'
-        ? { fuelCurve: asset.fuelCurve.map((pt) => ({ ...pt })) }
+        ? {
+            fuelCurve: asset.fuelCurve.map((pt) => ({ ...pt })),
+            scheduledHours: asset.scheduledHours.map((row) => [...row]),
+          }
         : {}),
     } as GenerationAsset;
 
@@ -808,13 +821,13 @@ const SolarAssetConfigurator: React.FC<SolarConfiguratorProps> = ({ asset, onUpd
 
         {asset.resourceMode === 'clear_sky' && (
           <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-400 leading-relaxed">
-            <strong className="text-slate-200">Clear-Sky Geometric Mode:</strong> Solar irradiance will be dynamically derived in future simulation milestones from site coordinates, panel tilt ({asset.tiltDegrees}°), and azimuth ({asset.azimuthDegrees}°).
+            <strong className="text-slate-200">Clear-Sky Geometric Mode:</strong> Clear-sky solar geometry will be implemented in the solar modeling milestone. Weather/cloud attenuation is not yet modeled.
           </div>
         )}
 
         {asset.resourceMode === 'weather_file' && (
           <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-400 leading-relaxed">
-            <strong className="text-slate-200">Weather File Mode:</strong> Integrates TMY3/EPW hourly solar radiation (GHI, DNI, DHI) datasets for localized weather modeling.
+            <strong className="text-slate-200">Weather File Mode:</strong> Hourly solar/weather-file ingestion will be implemented in the solar modeling milestone.
           </div>
         )}
       </div>
@@ -1151,7 +1164,7 @@ const WindAssetConfigurator: React.FC<WindConfiguratorProps> = ({ asset, onUpdat
 
         {asset.resourceMode === 'interval_file' && (
           <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-400 leading-relaxed">
-            <strong className="text-slate-200">Interval File Mode:</strong> Accepts high-resolution anemometer logs and weather files with direct velocity time-steps.
+            <strong className="text-slate-200">Interval File Mode:</strong> Interval wind-resource file ingestion will be implemented in the wind modeling milestone.
           </div>
         )}
       </div>
@@ -1381,9 +1394,25 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
             </select>
           </div>
 
+          {asset.fuelUnit === 'custom' && (
+            <div>
+              <label className="text-xs text-slate-300 font-medium flex items-center mb-1.5">
+                Custom Fuel Unit
+                <InfoTooltip text="Label for user-defined fuel measure (e.g. liters, cords, kg)." />
+              </label>
+              <input
+                type="text"
+                value={asset.customFuelUnitLabel}
+                onChange={(e) => onUpdate({ customFuelUnitLabel: e.target.value })}
+                placeholder="e.g. liter"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500 font-mono"
+              />
+            </div>
+          )}
+
           <div>
             <label className="text-xs text-slate-300 font-medium flex items-center mb-1.5">
-              Fuel Cost ($ / {asset.fuelUnit})
+              Fuel Price ($ / {asset.fuelUnit === 'custom' && asset.customFuelUnitLabel ? asset.customFuelUnitLabel : asset.fuelUnit})
               <InfoTooltip text="Delivered cost per fuel unit for marginal generation calculations." />
             </label>
             <div className="relative">
@@ -1394,10 +1423,35 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
                 type="number"
                 min="0"
                 step="0.05"
-                value={asset.fuelCostPerUnit ?? ''}
+                value={asset.fuelPricePerUnit}
                 onChange={(e) =>
                   onUpdate({
-                    fuelCostPerUnit: e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0),
+                    fuelPricePerUnit: Math.max(0, parseFloat(e.target.value) || 0),
+                  })
+                }
+                placeholder="0.00"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-300 font-medium flex items-center mb-1.5">
+              Variable Maintenance ($ / operating hour)
+              <InfoTooltip text="Variable servicing and overhaul expense incurred per hour of generator runtime." />
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs">
+                $
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.25"
+                value={asset.variableMaintenanceCostPerHourUsd}
+                onChange={(e) =>
+                  onUpdate({
+                    variableMaintenanceCostPerHourUsd: Math.max(0, parseFloat(e.target.value) || 0),
                   })
                 }
                 placeholder="0.00"
@@ -1426,6 +1480,98 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
         </div>
       </div>
 
+      {/* Scheduled Generator Editor (when dispatchMode === 'scheduled') */}
+      {asset.dispatchMode === 'scheduled' && (
+        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/80">
+            <div>
+              <h4 className="text-xs font-semibold text-slate-200">
+                Generator Run Schedule (7 × 24 Matrix)
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Click cells to schedule operating hours (canonical 0=Sunday to 6=Saturday).
+              </p>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-purple-600 inline-block" /> Run
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded bg-slate-900 border border-slate-800 inline-block" /> Off
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <div className="min-w-[620px]">
+              {/* Hour Numbers Header */}
+              <div className="grid grid-cols-[40px_repeat(24,1fr)] gap-1 mb-1.5 text-[10px] text-slate-500 font-mono text-center">
+                <div></div>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <div key={h}>{h}</div>
+                ))}
+              </div>
+
+              {/* Day Rows: Mon-Sun display, canonical indices */}
+              <div className="space-y-1">
+                {[
+                  { dayIndex: 1, label: 'Mon' },
+                  { dayIndex: 2, label: 'Tue' },
+                  { dayIndex: 3, label: 'Wed' },
+                  { dayIndex: 4, label: 'Thu' },
+                  { dayIndex: 5, label: 'Fri' },
+                  { dayIndex: 6, label: 'Sat' },
+                  { dayIndex: 0, label: 'Sun' },
+                ].map(({ dayIndex, label }) => {
+                  const row =
+                    (asset.scheduledHours && asset.scheduledHours[dayIndex]) ||
+                    Array(24).fill(false);
+                  return (
+                    <div
+                      key={dayIndex}
+                      className="grid grid-cols-[40px_repeat(24,1fr)] gap-1 items-center"
+                    >
+                      <span className="text-[11px] font-medium text-slate-400 font-mono">
+                        {label}
+                      </span>
+                      {Array.from({ length: 24 }, (_, hour) => {
+                        const isScheduled = !!row[hour];
+                        return (
+                          <button
+                            key={hour}
+                            type="button"
+                            onClick={() => {
+                              const currentSchedule =
+                                asset.scheduledHours && asset.scheduledHours.length === 7
+                                  ? asset.scheduledHours
+                                  : Array.from({ length: 7 }, () => Array(24).fill(false));
+                              const updated = currentSchedule.map((r, d) =>
+                                d === dayIndex
+                                  ? r.map((val, h) => (h === hour ? !val : val))
+                                  : [...r]
+                              );
+                              onUpdate({ scheduledHours: updated });
+                            }}
+                            title={`${label} ${hour}:00 - ${isScheduled ? 'Scheduled Run' : 'Off'}`}
+                            className={`h-6 rounded text-[10px] font-mono flex items-center justify-center transition-all ${
+                              isScheduled
+                                ? 'bg-purple-600 hover:bg-purple-500 text-white font-semibold shadow-sm'
+                                : 'bg-slate-900 hover:bg-slate-800 text-slate-600 border border-slate-850'
+                            }`}
+                          >
+                            {isScheduled ? '✓' : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Interconnection & Routing Permissions */}
       <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
         <h4 className="text-xs font-semibold text-slate-200 mb-3">
@@ -1446,7 +1592,7 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
                 Allow Battery Charging
               </span>
               <span className="text-[11px] text-slate-400">
-                Permit surplus generator power to recharge the stationary battery storage system.
+                Reserved for future generator-to-battery dispatch modeling. This setting does not affect current Results.
               </span>
             </div>
           </label>
@@ -1463,7 +1609,7 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
                 Allow Grid Export
               </span>
               <span className="text-[11px] text-slate-400">
-                Permit generator power to export back across the utility meter for net metering credits.
+                Generator grid-parallel export is not modeled yet. This setting is reserved for a future dispatch milestone.
               </span>
             </div>
           </label>
@@ -1475,7 +1621,7 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
         <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/80">
           <div>
             <h4 className="text-xs font-semibold text-slate-200">
-              Fuel Consumption Curve ({asset.fuelUnit}/hr vs % Load)
+              Fuel Consumption Curve ({asset.fuelUnit === 'custom' && asset.customFuelUnitLabel ? asset.customFuelUnitLabel : asset.fuelUnit}/hr vs % Load)
             </h4>
             <p className="text-[11px] text-slate-400">
               Non-linear engine consumption profile across part-load operating regimes.
@@ -1495,7 +1641,7 @@ const GeneratorAssetConfigurator: React.FC<GeneratorConfiguratorProps> = ({ asse
             <thead>
               <tr className="border-b border-slate-800 text-slate-400">
                 <th className="pb-2 font-medium">Load Level (% of Rated)</th>
-                <th className="pb-2 font-medium">Consumption ({asset.fuelUnit}/hr)</th>
+                <th className="pb-2 font-medium">Consumption ({asset.fuelUnit === 'custom' && asset.customFuelUnitLabel ? asset.customFuelUnitLabel : asset.fuelUnit}/hr)</th>
                 <th className="pb-2 text-right">Actions</th>
               </tr>
             </thead>

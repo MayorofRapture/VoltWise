@@ -18,6 +18,7 @@ import {
   createDefaultWindAsset,
   createDefaultGeneratorAsset,
   createDefaultAsset,
+  createEmptyGeneratorSchedule,
 } from '../utils/generationDefaults';
 import {
   runAnnualSimulation,
@@ -62,10 +63,20 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
     expect(c1.site.elevationM).toBeNull();
 
     c1.site.latitude = 40.0;
-    c1.assets.push(createDefaultSolarAsset());
+    c1.assets.push(createDefaultSolarAsset('temp-solar'));
     expect(c2.site.latitude).toBeNull();
     expect(c2.assets).toHaveLength(0);
     expect(DEFAULT_GENERATION_CONFIG.assets).toHaveLength(0);
+  });
+
+  it('deterministic factories set caller-provided ID with no timestamps or counters', () => {
+    expect(createDefaultSolarAsset('s1').id).toBe('s1');
+    expect(createDefaultWindAsset('w1').id).toBe('w1');
+    expect(createDefaultGeneratorAsset('g1').id).toBe('g1');
+
+    expect(createDefaultAsset('solar', 's2').id).toBe('s2');
+    expect(createDefaultAsset('wind', 'w2').id).toBe('w2');
+    expect(createDefaultAsset('generator', 'g2').id).toBe('g2');
   });
 
   it('instantiates neutral DEFAULT_SOLAR_ASSET with zero costs and 12-month zero solar resource data', () => {
@@ -93,16 +104,48 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
     expect(wind.powerCurve).toEqual([]);
   });
 
-  it('instantiates neutral DEFAULT_GENERATOR_ASSET with zero costs, null fuel price, and empty fuel curve', () => {
+  it('instantiates complete neutral DEFAULT_GENERATOR_ASSET with all required G1 fields', () => {
     const generator: GeneratorGenerationAsset = DEFAULT_GENERATOR_ASSET;
     expect(generator.type).toBe('generator');
     expect(generator.installedCostUsd).toBe(0);
     expect(generator.annualMaintenanceCostUsd).toBe(0);
-    expect(generator.fuelCostPerUnit).toBeNull();
+    expect(generator.fuelPricePerUnit).toBe(0);
+    expect(generator.customFuelUnitLabel).toBe('');
+    expect(generator.variableMaintenanceCostPerHourUsd).toBe(0);
     expect(generator.fuelCurve).toEqual([]);
+    expect(generator.dispatchMode).toBe('standby');
+    expect(generator.allowBatteryCharging).toBe(true);
+    expect(generator.allowGridExport).toBe(false);
     expect(['natural_gas', 'propane', 'gasoline', 'diesel', 'custom']).toContain(generator.fuelType);
     expect(['gallon', 'therm', 'ccf', 'mmbtu', 'custom']).toContain(generator.fuelUnit);
-    expect(['standby', 'scheduled', 'economic']).toContain(generator.dispatchMode);
+  });
+
+  it('provides isolated 7x24 empty generator schedule that avoids shared row references', () => {
+    const schedule = createEmptyGeneratorSchedule();
+    expect(schedule).toHaveLength(7);
+    schedule.forEach((row) => {
+      expect(row).toHaveLength(24);
+      row.forEach((val) => {
+        expect(val).toBe(false);
+      });
+    });
+
+    const g1 = createDefaultGeneratorAsset('gen-1');
+    const g2 = createDefaultGeneratorAsset('gen-2');
+
+    expect(g1.scheduledHours).toHaveLength(7);
+    g1.scheduledHours.forEach((row) => {
+      expect(row).toHaveLength(24);
+      row.forEach((val) => expect(val).toBe(false));
+    });
+
+    // Mutate day 0, hour 0 in g1
+    g1.scheduledHours[0][0] = true;
+    expect(g1.scheduledHours[0][0]).toBe(true);
+    // Prove row 1 is unaffected (no shared row references in g1)
+    expect(g1.scheduledHours[1][0]).toBe(false);
+    // Prove g2 is unaffected (independent instances)
+    expect(g2.scheduledHours[0][0]).toBe(false);
   });
 
   it('properly discriminates assets in GenerationConfig when populated', () => {
@@ -114,9 +157,9 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
         elevationM: 16,
       },
       assets: [
-        createDefaultSolarAsset(),
-        createDefaultWindAsset(),
-        createDefaultGeneratorAsset(),
+        createDefaultSolarAsset('solar-1'),
+        createDefaultWindAsset('wind-1'),
+        createDefaultGeneratorAsset('gen-1'),
       ],
     };
     expect(config.assets.length).toBe(3);
@@ -127,36 +170,39 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
 
     expect(solar).toBeDefined();
     expect(solar?.type).toBe('solar');
+    expect(solar?.id).toBe('solar-1');
 
     expect(wind).toBeDefined();
     expect(wind?.type).toBe('wind');
+    expect(wind?.id).toBe('wind-1');
 
     expect(generator).toBeDefined();
     expect(generator?.type).toBe('generator');
+    expect(generator?.id).toBe('gen-1');
   });
 
-  it('factory functions generate isolated instances with unique IDs', () => {
-    const s1 = createDefaultSolarAsset();
-    const s2 = createDefaultSolarAsset('Second Solar Array');
-    expect(s1.id).not.toBe(s2.id);
+  it('factory functions generate isolated instances with caller IDs and cloned arrays', () => {
+    const s1 = createDefaultSolarAsset('s1');
+    const s2 = createDefaultSolarAsset('s2', 'Second Solar Array');
+    expect(s1.id).toBe('s1');
+    expect(s2.id).toBe('s2');
     expect(s2.name).toBe('Second Solar Array');
     s1.monthlyPeakSunHoursPerDay[0] = 5.5;
     expect(s2.monthlyPeakSunHoursPerDay[0]).not.toBe(5.5);
 
-    const w1 = createDefaultWindAsset();
-    const w2 = createDefaultWindAsset();
-    expect(w1.id).not.toBe(w2.id);
+    const w1 = createDefaultWindAsset('w1');
+    const w2 = createDefaultWindAsset('w2');
+    expect(w1.id).toBe('w1');
+    expect(w2.id).toBe('w2');
     w1.powerCurve.push({ windSpeedMps: 10, outputKw: 5 });
     expect(w2.powerCurve).toHaveLength(0);
 
-    const g1 = createDefaultGeneratorAsset();
-    const g2 = createDefaultGeneratorAsset();
-    expect(g1.id).not.toBe(g2.id);
+    const g1 = createDefaultGeneratorAsset('g1');
+    const g2 = createDefaultGeneratorAsset('g2');
+    expect(g1.id).toBe('g1');
+    expect(g2.id).toBe('g2');
     g1.fuelCurve.push({ loadPercent: 50, fuelUnitsPerHour: 1.2 });
     expect(g2.fuelCurve).toHaveLength(0);
-
-    const genericAsset = createDefaultAsset('solar');
-    expect(genericAsset.type).toBe('solar');
   });
 
   it('verifies invariant: changing generation config does not alter simulation or financial results', () => {
@@ -205,6 +251,8 @@ describe('G1 Milestone — Power Generation Contracts & Defaults', () => {
           ...DEFAULT_GENERATOR_ASSET,
           ratedContinuousKw: 100.0,
           installedCostUsd: 75000,
+          fuelPricePerUnit: 2.25,
+          variableMaintenanceCostPerHourUsd: 1.5,
         },
       ],
     };

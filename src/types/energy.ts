@@ -495,7 +495,10 @@ export interface GeneratorGenerationAsset extends GenerationAssetBase {
 
   fuelType: GeneratorFuelType;
   fuelUnit: GeneratorFuelUnit;
-  fuelCostPerUnit: number | null;
+  customFuelUnitLabel: string;
+
+  fuelPricePerUnit: number;
+  variableMaintenanceCostPerHourUsd: number;
 
   fuelCurve: GeneratorFuelCurvePoint[];
 
@@ -503,6 +506,8 @@ export interface GeneratorGenerationAsset extends GenerationAssetBase {
 
   allowBatteryCharging: boolean;
   allowGridExport: boolean;
+
+  scheduledHours: boolean[][];
 }
 
 export type GenerationAsset =
