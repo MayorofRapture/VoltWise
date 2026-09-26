@@ -60,7 +60,7 @@ export interface ResultsAnalyticsTabProps {
   setActiveProfileId: (id: string) => void;
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
-  financials?: MacroFinancials;
+  financials: MacroFinancials;
   csvResult?: CsvValidationResult | null;
 }
 
@@ -72,7 +72,7 @@ interface ResultsAnalyticsContentProps {
   setActiveProfileId: (id: string) => void;
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
-  financials?: MacroFinancials;
+  financials: MacroFinancials;
   csvResult?: CsvValidationResult | null;
 }
 

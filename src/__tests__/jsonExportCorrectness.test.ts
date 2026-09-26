@@ -168,4 +168,131 @@ describe('Issue 4 — JSON Export Correctness and Consistency', () => {
     expect(exportData.tariff_configuration.rate_tiers.length).toBeGreaterThanOrEqual(1);
     expect(exportData.tariff_configuration.schedule_matrix).toHaveLength(7);
   });
+
+  it('exports explicit cost_and_incentives block distinguishing upfront, immediate, and deferred incentives', () => {
+    const customFinancials = {
+      ...DEFAULT_MACRO_FINANCIALS,
+      localRebateFlat: 1500,
+      federalTaxCreditPercent: 30,
+      federalTaxCreditRealizationYear: 1,
+      isFinanced: false,
+    };
+
+    const analysis = calculate15YearFinancials(profile, dummySummary, customFinancials);
+
+    const exportData = buildExportLlmJson({
+      activeAnalysis: analysis,
+      projectionHorizon: 15,
+      tiers,
+      activeTouProfile: touProfile,
+      financials: customFinancials,
+      csvResult: mockCsvResult,
+    });
+
+    const costAndIncentives = exportData.financial_assumptions.cost_and_incentives;
+    expect(costAndIncentives).toBeDefined();
+
+    // 1. Gross installed cost
+    expect(costAndIncentives.gross_installed_cost_usd).toBe(analysis.grossCost);
+
+    // 2. Immediate rebate amount
+    const expectedImmediateRebates = Math.min(
+      analysis.grossCost,
+      Math.max(0, customFinancials.localRebateFlat)
+    );
+    expect(costAndIncentives.immediate_rebates_usd).toBe(expectedImmediateRebates);
+
+    // 3. Upfront cost after immediate rebates (acquisition basis before financing)
+    const expectedUpfrontCost = Math.max(0, analysis.grossCost - expectedImmediateRebates);
+    expect(costAndIncentives.upfront_cost_after_immediate_rebates_usd).toBe(expectedUpfrontCost);
+
+    // 4. Cash due at purchase (for cash purchase = upfront cost after immediate rebates)
+    expect(costAndIncentives.cash_due_at_purchase_usd).toBe(analysis.upfrontOutOfPocket);
+    expect(costAndIncentives.cash_due_at_purchase_usd).toBe(expectedUpfrontCost);
+
+    // 5. Federal tax credit percentage and realization year
+    expect(costAndIncentives.federal_tax_credit_pct).toBe(30);
+    expect(costAndIncentives.federal_tax_credit_realization_year).toBe(1);
+
+    // 6. Deferred federal tax credit USD (from full projections cash flow)
+    const expectedDeferredTaxCredit = analysis.projections.reduce(
+      (sum, p) => sum + (p.taxCreditInflow ?? 0),
+      0
+    );
+    expect(costAndIncentives.deferred_federal_tax_credit_usd).toBe(expectedDeferredTaxCredit);
+
+    // 7. Net cost after all incentives
+    expect(costAndIncentives.net_cost_after_all_incentives_usd).toBe(analysis.netInstalledCost);
+
+    // 8. Ensure net_upfront_installed_cost_usd is removed from horizon_summary_kpis
+    expect('net_upfront_installed_cost_usd' in exportData.horizon_summary_kpis).toBe(false);
+
+    // 9. Ensure no duplicate incentive assumptions at root of financial_assumptions
+    expect('federal_tax_credit_pct' in exportData.financial_assumptions).toBe(false);
+    expect('federal_tax_credit_realization_year' in exportData.financial_assumptions).toBe(false);
+    expect('local_rebate_flat_usd' in exportData.financial_assumptions).toBe(false);
+  });
+
+  it('correctly exports financing reproducibility fields for financed vs cash scenarios', () => {
+    // 1. Cash purchase
+    const cashFinancials = {
+      ...DEFAULT_MACRO_FINANCIALS,
+      isFinanced: false,
+    };
+    const cashAnalysis = calculate15YearFinancials(profile, dummySummary, cashFinancials);
+    const cashExport = buildExportLlmJson({
+      activeAnalysis: cashAnalysis,
+      projectionHorizon: 15,
+      tiers,
+      activeTouProfile: touProfile,
+      financials: cashFinancials,
+      csvResult: mockCsvResult,
+    });
+
+    expect(cashExport.financial_assumptions.financing.is_financed).toBe(false);
+    expect(cashExport.financial_assumptions.financing.down_payment_usd).toBeNull();
+    expect(cashExport.financial_assumptions.financing.total_loan_interest_usd).toBeNull();
+
+    // 2. Financed purchase
+    const financedFinancials = {
+      ...DEFAULT_MACRO_FINANCIALS,
+      isFinanced: true,
+      loanAprPercent: 6.5,
+      loanTermYears: 10,
+      loanDownPaymentPercent: 20,
+    };
+    const financedAnalysis = calculate15YearFinancials(profile, dummySummary, financedFinancials);
+    const financedExport = buildExportLlmJson({
+      activeAnalysis: financedAnalysis,
+      projectionHorizon: 15,
+      tiers,
+      activeTouProfile: touProfile,
+      financials: financedFinancials,
+      csvResult: mockCsvResult,
+    });
+
+    expect(financedExport.financial_assumptions.financing.is_financed).toBe(true);
+    expect(financedExport.financial_assumptions.financing.down_payment_usd).toBe(financedAnalysis.upfrontOutOfPocket);
+    expect(financedExport.financial_assumptions.financing.total_loan_interest_usd).toBe(financedAnalysis.totalLoanInterestPaid);
+    expect(financedExport.financial_assumptions.cost_and_incentives.cash_due_at_purchase_usd).toBe(financedAnalysis.upfrontOutOfPocket);
+  });
+
+  it('sources application version directly from package.json without manual duplication', async () => {
+    const pkg = await import('../../package.json');
+    const { APP_VERSION } = await import('../version');
+
+    expect(APP_VERSION).toBe(pkg.version);
+
+    const analysis = calculate15YearFinancials(profile, dummySummary, DEFAULT_MACRO_FINANCIALS);
+    const exportData = buildExportLlmJson({
+      activeAnalysis: analysis,
+      projectionHorizon: 15,
+      tiers,
+      activeTouProfile: touProfile,
+      financials: DEFAULT_MACRO_FINANCIALS,
+      csvResult: mockCsvResult,
+    });
+
+    expect(exportData.metadata.app_version).toBe(pkg.version);
+  });
 });

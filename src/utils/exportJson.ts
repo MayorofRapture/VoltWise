@@ -19,7 +19,7 @@ export interface ExportLlmJsonParams {
   projectionHorizon: number;
   tiers: RateTier[];
   activeTouProfile?: TouProfile;
-  financials?: MacroFinancials;
+  financials: MacroFinancials;
   csvResult?: CsvValidationResult | null;
 }
 
@@ -77,9 +77,18 @@ export interface LlmExportPayload {
     schedule_matrix: string[][];
   };
   financial_assumptions: {
-    federal_tax_credit_pct: number;
-    federal_tax_credit_realization_year: number;
-    local_rebate_flat_usd: number;
+    cost_and_incentives: {
+      gross_installed_cost_usd: number;
+      immediate_rebates_usd: number;
+      upfront_cost_after_immediate_rebates_usd: number;
+      cash_due_at_purchase_usd: number;
+
+      federal_tax_credit_pct: number;
+      deferred_federal_tax_credit_usd: number;
+      federal_tax_credit_realization_year: number;
+
+      net_cost_after_all_incentives_usd: number;
+    };
     annual_electricity_inflation_rate_pct: number;
     annual_battery_degradation_rate_pct: number;
     discount_rate_pct: number;
@@ -90,6 +99,8 @@ export interface LlmExportPayload {
       down_payment_pct: number;
       loan_principal_usd: number;
       monthly_loan_payment_usd: number;
+      down_payment_usd: number | null;
+      total_loan_interest_usd: number | null;
     };
     opportunity_cost: {
       vehicle_name: string;
@@ -122,7 +133,6 @@ export interface LlmExportPayload {
   };
   horizon_summary_kpis: {
     horizon_years: number;
-    net_upfront_installed_cost_usd: number;
     horizon_net_present_value_usd: number;
     horizon_cumulative_net_cash_flow_usd: number;
     horizon_cumulative_savings_usd: number;
@@ -193,13 +203,29 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
   } = activeAnalysis;
 
   // Replacement settings: explicit handling of replacementEnabled
-  const replacementEnabled = financials?.replacementEnabled ?? analysisReplacementEnabled ?? true;
+  const replacementEnabled = financials.replacementEnabled ?? analysisReplacementEnabled ?? true;
   const replacementCost = replacementEnabled
-    ? (financials?.replacementCost ?? replacementCostTotal ?? 0)
+    ? (financials.replacementCost ?? replacementCostTotal ?? 0)
     : null;
   const replacementYear = replacementEnabled
-    ? (financials?.replacementYear ?? analysisReplacementYear ?? 0)
+    ? (financials.replacementYear ?? analysisReplacementYear ?? 0)
     : null;
+
+  // Cost and incentives calculations
+  const immediateRebates = Math.min(
+    activeAnalysis.grossCost,
+    Math.max(0, financials.localRebateFlat)
+  );
+
+  const upfrontCostAfterImmediateRebates = Math.max(
+    0,
+    activeAnalysis.grossCost - immediateRebates
+  );
+
+  const deferredFederalTaxCredit = (activeAnalysis.projections || []).reduce(
+    (sum, p) => sum + (p.taxCreditInflow ?? 0),
+    0
+  );
 
   // Horizon-specific projections slicing & authoritative summary
   const safeHorizon = Math.max(1, Math.min(25, projectionHorizon));
@@ -282,19 +308,28 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
       schedule_matrix: activeTouProfile?.scheduleMatrix || [],
     },
     financial_assumptions: {
-      federal_tax_credit_pct: financials?.federalTaxCreditPercent ?? 0,
-      federal_tax_credit_realization_year: financials?.federalTaxCreditRealizationYear ?? 1,
-      local_rebate_flat_usd: financials?.localRebateFlat ?? 0,
-      annual_electricity_inflation_rate_pct: financials?.annualElectricityInflationRate ?? 3.5,
-      annual_battery_degradation_rate_pct: financials?.annualBatteryDegradationRate ?? 2.0,
-      discount_rate_pct: financials?.discountRatePercent ?? 5.0,
+      cost_and_incentives: {
+        gross_installed_cost_usd: Math.round(activeAnalysis.grossCost * 100) / 100,
+        immediate_rebates_usd: Math.round(immediateRebates * 100) / 100,
+        upfront_cost_after_immediate_rebates_usd: Math.round(upfrontCostAfterImmediateRebates * 100) / 100,
+        cash_due_at_purchase_usd: Math.round(activeAnalysis.upfrontOutOfPocket * 100) / 100,
+        federal_tax_credit_pct: financials.federalTaxCreditPercent,
+        deferred_federal_tax_credit_usd: Math.round(deferredFederalTaxCredit * 100) / 100,
+        federal_tax_credit_realization_year: financials.federalTaxCreditRealizationYear ?? 1,
+        net_cost_after_all_incentives_usd: Math.round(activeAnalysis.netInstalledCost * 100) / 100,
+      },
+      annual_electricity_inflation_rate_pct: financials.annualElectricityInflationRate,
+      annual_battery_degradation_rate_pct: financials.annualBatteryDegradationRate,
+      discount_rate_pct: financials.discountRatePercent,
       financing: {
         is_financed: Boolean(isFinanced),
-        loan_apr_pct: financials?.loanAprPercent ?? 6.99,
-        loan_term_years: financials?.loanTermYears ?? 10,
-        down_payment_pct: financials?.loanDownPaymentPercent ?? 0,
+        loan_apr_pct: financials.loanAprPercent ?? 6.99,
+        loan_term_years: financials.loanTermYears ?? 10,
+        down_payment_pct: financials.loanDownPaymentPercent ?? 0,
         loan_principal_usd: Math.round(loanPrincipal),
         monthly_loan_payment_usd: Math.round(monthlyLoanPayment * 100) / 100,
+        down_payment_usd: isFinanced ? Math.round(upfrontOutOfPocket * 100) / 100 : null,
+        total_loan_interest_usd: isFinanced ? Math.round(activeAnalysis.totalLoanInterestPaid * 100) / 100 : null,
       },
       opportunity_cost: {
         vehicle_name: opportunityCostVehicleName,
@@ -309,9 +344,9 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
       },
       resilience: {
         critical_home_load_kw: criticalLoadPowerKw,
-        annual_outage_days: financials?.annualOutageDays ?? 2.5,
-        value_of_lost_load_usd_per_day: financials?.valueOfLostLoadPerDay ?? 100,
-        include_voll_in_roi: financials?.includeVollInRoi ?? false,
+        annual_outage_days: financials.annualOutageDays ?? 2.5,
+        value_of_lost_load_usd_per_day: financials.valueOfLostLoadPerDay ?? 100,
+        include_voll_in_roi: financials.includeVollInRoi ?? false,
       },
     },
     year_1_results: {
@@ -327,7 +362,6 @@ export function buildExportLlmJson(params: ExportLlmJsonParams): LlmExportPayloa
     },
     horizon_summary_kpis: {
       horizon_years: safeHorizon,
-      net_upfront_installed_cost_usd: Math.round(netInstalledCost * 100) / 100,
       horizon_net_present_value_usd: Math.round(horizonSummary.netPresentValue * 100) / 100,
       horizon_cumulative_net_cash_flow_usd: Math.round(horizonSummary.cumulativeCashFlow * 100) / 100,
       horizon_cumulative_savings_usd: Math.round(horizonSummary.cumulativeSavings * 100) / 100,

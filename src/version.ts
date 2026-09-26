@@ -1,5 +1,6 @@
+import packageMetadata from '../package.json';
+
 /**
- * Authoritative application version for VoltWise.
- * Must be in sync with package.json version.
+ * Authoritative application version for VoltWise, sourced from package.json.
  */
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = packageMetadata.version;
