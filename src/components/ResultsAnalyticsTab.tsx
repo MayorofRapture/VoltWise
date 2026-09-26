@@ -379,7 +379,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   const chartH = 340;
   const padL = 75;
   const padR = 35;
-  const padT = 30;
+  const padT = 38;
   const padB = 45;
 
   // Determine Y-range from enabled visible curves
@@ -472,6 +472,15 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
     activeAnalysis.replacementYear <= projectionHorizon
   );
   const replacementX = hasReplacementInHorizon && activeAnalysis ? getX(activeAnalysis.replacementYear) : null;
+
+  // Collision detection between Inverter Replacement label and Payback label to prevent overlap
+  const isCrossoverLabelOverlap = Boolean(
+    hasReplacementInHorizon &&
+    hasBreakeven &&
+    replacementX !== null &&
+    breakevenX !== null &&
+    Math.abs(replacementX - breakevenX) < 220
+  );
 
   // Generate 5-6 nice horizontal grid line values
   const yTicks = useMemo(() => {
@@ -1605,7 +1614,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <g>
                   <line
                     x1={replacementX!}
-                    y1={padT}
+                    y1={isCrossoverLabelOverlap ? padT - 18 : padT}
                     x2={replacementX!}
                     y2={chartH - padB}
                     stroke="#f59e0b"
@@ -1614,12 +1623,13 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                   />
                   <text
                     x={replacementX!}
-                    y={padT - 6}
+                    y={isCrossoverLabelOverlap ? padT - 22 : padT - 6}
                     textAnchor="middle"
                     fill="#f59e0b"
                     fontSize="9"
                     fontFamily="monospace"
                     fontWeight="bold"
+                    style={{ pointerEvents: 'none' }}
                   >
                     Yr {replacementYear} Inverter (-${replacementCostTotal.toLocaleString()})
                   </text>
@@ -1654,6 +1664,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                     fontSize="9"
                     fontFamily="monospace"
                     fontWeight="bold"
+                    style={{ pointerEvents: 'none' }}
                   >
                     Payback: {paybackFormatted}
                   </text>

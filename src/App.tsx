@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { DataAndRatesTab } from './components/DataAndRatesTab';
 import { BatteryProfilesTab } from './components/BatteryProfilesTab';
+import { PowerGenerationTab } from './components/PowerGenerationTab';
 import { FinancialSettingsTab } from './components/FinancialSettingsTab';
 import { ResultsAnalyticsTab } from './components/ResultsAnalyticsTab';
 import {
@@ -17,6 +18,7 @@ import {
   RateTier,
   TouProfile,
   AnnualSimulationSummary,
+  GenerationConfig,
 } from './types/energy';
 import {
   DEFAULT_BATTERY_PROFILES,
@@ -30,12 +32,13 @@ import {
   getHeaderSavingsLabel,
   getHeaderPaybackText,
 } from './utils/simulationEngine';
+import { DEFAULT_GENERATION_CONFIG } from './utils/generationDefaults';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
 import { Zap, ChevronRight, Activity, ArrowRight, Bookmark } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'data' | 'profiles' | 'financials' | 'results'>('results');
+  const [activeTab, setActiveTab] = useState<'data' | 'profiles' | 'generation' | 'financials' | 'results'>('results');
 
   // TOU Saved Rate Profiles & Active Schedule
   const [touProfiles, setTouProfiles] = useState<TouProfile[]>(DEFAULT_TOU_PROFILES);
@@ -46,6 +49,9 @@ export default function App() {
   // Battery Profiles
   const [profiles, setProfiles] = useState<BatteryProfile[]>(DEFAULT_BATTERY_PROFILES);
   const [activeProfileId, setActiveProfileId] = useState<string>('powerwall-3');
+
+  // Power Generation Assets & Site Config (Milestone G1)
+  const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(DEFAULT_GENERATION_CONFIG);
 
   // Macro Financials
   const [financials, setFinancials] = useState<MacroFinancials>(DEFAULT_MACRO_FINANCIALS);
@@ -92,6 +98,7 @@ export default function App() {
     setScheduleMatrix(DEFAULT_TOU_PROFILES[0].scheduleMatrix);
     setProfiles(DEFAULT_BATTERY_PROFILES);
     setActiveProfileId('powerwall-3');
+    setGenerationConfig(DEFAULT_GENERATION_CONFIG);
     setFinancials(DEFAULT_MACRO_FINANCIALS);
     setActiveTab('data');
   };
@@ -161,8 +168,9 @@ export default function App() {
             <span className="text-emerald-400 font-medium">
               {activeTab === 'data' && '01. CSV Ingestion & TOU Schedule Matrix'}
               {activeTab === 'profiles' && '02. Battery Profiles & Hardware Strategy'}
-              {activeTab === 'financials' && '03. Incentives, Escalation & Degradation'}
-              {activeTab === 'results' && '04. Results, Cash Flow & Dispatch'}
+              {activeTab === 'generation' && '03. On-Site Power Generation'}
+              {activeTab === 'financials' && '04. Incentives, Escalation & Degradation'}
+              {activeTab === 'results' && '05. Results, Cash Flow & Dispatch'}
             </span>
           </div>
 
@@ -244,7 +252,15 @@ export default function App() {
           />
         )}
 
-        {/* Tab 3: Financials & Settings */}
+        {/* Tab 3: Power Generation */}
+        {activeTab === 'generation' && (
+          <PowerGenerationTab
+            generationConfig={generationConfig}
+            setGenerationConfig={setGenerationConfig}
+          />
+        )}
+
+        {/* Tab 4: Financials & Settings */}
         {activeTab === 'financials' && (
           <FinancialSettingsTab
             financials={financials}
@@ -253,7 +269,7 @@ export default function App() {
           />
         )}
 
-        {/* Tab 4: Results & Analytics */}
+        {/* Tab 5: Results & Analytics */}
         {activeTab === 'results' && (
           <ResultsAnalyticsTab
             activeAnalysis={activeAnalysis}
@@ -276,7 +292,8 @@ export default function App() {
               <button
                 onClick={() => {
                   if (activeTab === 'results') setActiveTab('financials');
-                  else if (activeTab === 'financials') setActiveTab('profiles');
+                  else if (activeTab === 'financials') setActiveTab('generation');
+                  else if (activeTab === 'generation') setActiveTab('profiles');
                   else if (activeTab === 'profiles') setActiveTab('data');
                 }}
                 className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
@@ -291,7 +308,8 @@ export default function App() {
               <button
                 onClick={() => {
                   if (activeTab === 'data') setActiveTab('profiles');
-                  else if (activeTab === 'profiles') setActiveTab('financials');
+                  else if (activeTab === 'profiles') setActiveTab('generation');
+                  else if (activeTab === 'generation') setActiveTab('financials');
                   else if (activeTab === 'financials') setActiveTab('results');
                 }}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors shadow-sm shadow-emerald-950"

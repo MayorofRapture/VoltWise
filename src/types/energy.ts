@@ -381,3 +381,137 @@ export interface PartialPeriodDisplayMetrics {
   peakDemandKw: number;
 }
 
+// ============================================================================
+// On-Site Power Generation Domain Contracts (G1 Milestone)
+// ============================================================================
+
+export interface GenerationSite {
+  latitude: number | null;
+  longitude: number | null;
+  timeZone: string;
+  elevationM: number | null;
+}
+
+export interface GenerationAssetBase {
+  id: string;
+  name: string;
+  enabled: boolean;
+
+  installedCostUsd: number;
+  annualMaintenanceCostUsd: number;
+}
+
+export type SolarResourceMode =
+  | 'clear_sky'
+  | 'monthly_peak_sun_hours'
+  | 'weather_file';
+
+export interface SolarGenerationAsset extends GenerationAssetBase {
+  type: 'solar';
+
+  dcCapacityKw: number;
+
+  tiltDegrees: number;
+  azimuthDegrees: number;
+
+  inverterAcCapacityKw: number;
+  inverterEfficiencyPercent: number;
+
+  systemLossPercent: number;
+  shadingLossPercent: number;
+
+  annualDegradationPercent: number;
+
+  resourceMode: SolarResourceMode;
+
+  monthlyPeakSunHoursPerDay: number[];
+}
+
+export type WindResourceMode =
+  | 'monthly_average'
+  | 'annual_average'
+  | 'interval_file';
+
+export interface WindPowerCurvePoint {
+  windSpeedMps: number;
+  outputKw: number;
+}
+
+export interface WindGenerationAsset extends GenerationAssetBase {
+  type: 'wind';
+
+  ratedPowerKw: number;
+
+  hubHeightM: number;
+  rotorDiameterM: number;
+
+  cutInWindSpeedMps: number;
+  ratedWindSpeedMps: number;
+  cutOutWindSpeedMps: number;
+
+  availabilityPercent: number;
+  systemLossPercent: number;
+
+  resourceMode: WindResourceMode;
+
+  measurementHeightM: number;
+  windShearExponent: number;
+
+  annualAverageWindSpeedMps: number | null;
+  monthlyAverageWindSpeedMps: number[];
+
+  powerCurve: WindPowerCurvePoint[];
+}
+
+export type GeneratorFuelType =
+  | 'natural_gas'
+  | 'propane'
+  | 'gasoline'
+  | 'diesel'
+  | 'custom';
+
+export type GeneratorFuelUnit =
+  | 'gallon'
+  | 'therm'
+  | 'ccf'
+  | 'mmbtu'
+  | 'custom';
+
+export type GeneratorDispatchMode =
+  | 'standby'
+  | 'scheduled'
+  | 'economic';
+
+export interface GeneratorFuelCurvePoint {
+  loadPercent: number;
+  fuelUnitsPerHour: number;
+}
+
+export interface GeneratorGenerationAsset extends GenerationAssetBase {
+  type: 'generator';
+
+  ratedContinuousKw: number;
+  minimumStableLoadPercent: number;
+
+  fuelType: GeneratorFuelType;
+  fuelUnit: GeneratorFuelUnit;
+  fuelCostPerUnit: number;
+
+  fuelCurve: GeneratorFuelCurvePoint[];
+
+  dispatchMode: GeneratorDispatchMode;
+
+  allowBatteryCharging: boolean;
+  allowGridExport: boolean;
+}
+
+export type GenerationAsset =
+  | SolarGenerationAsset
+  | WindGenerationAsset
+  | GeneratorGenerationAsset;
+
+export interface GenerationConfig {
+  site: GenerationSite;
+  assets: GenerationAsset[];
+}
+

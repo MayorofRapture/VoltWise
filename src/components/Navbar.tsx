@@ -2,8 +2,8 @@ import React from 'react';
 import { BatteryCharging, RefreshCw, FileSpreadsheet } from 'lucide-react';
 
 interface NavbarProps {
-  activeTab: 'data' | 'profiles' | 'financials' | 'results';
-  setActiveTab: (tab: 'data' | 'profiles' | 'financials' | 'results') => void;
+  activeTab: 'data' | 'profiles' | 'generation' | 'financials' | 'results';
+  setActiveTab: (tab: 'data' | 'profiles' | 'generation' | 'financials' | 'results') => void;
   onLoadSampleData: () => void;
   onResetData: () => void;
   hasData: boolean;
@@ -21,8 +21,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   const tabs = [
     { id: 'data', label: '1. Data & TOU Rates' },
     { id: 'profiles', label: '2. Battery Profiles' },
-    { id: 'financials', label: '3. Financials & Settings' },
-    { id: 'results', label: '4. Results & Analytics' },
+    { id: 'generation', label: '3. Power Generation' },
+    { id: 'financials', label: '4. Financials & Settings' },
+    { id: 'results', label: '5. Results & Analytics' },
   ] as const;
 
   return (
