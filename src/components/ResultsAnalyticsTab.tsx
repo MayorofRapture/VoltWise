@@ -979,7 +979,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         {/* Card 3: Payback Period & IRR */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
-            <span>{hasFinancialAnalysis && activeAnalysis ? 'Payback & Internal Return (IRR)' : 'Payback & IRR'}</span>
+            <span>{hasFinancialAnalysis && activeAnalysis ? 'Payback & Internal Rate of Return (IRR)' : 'Payback & IRR'}</span>
             <Clock className="h-4 w-4 text-amber-400" />
           </div>
           {hasFinancialAnalysis && activeAnalysis ? (
