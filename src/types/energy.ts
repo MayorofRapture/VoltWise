@@ -601,3 +601,47 @@ export interface SolarGenerationProfileSummary {
   monthly: SolarMonthlyGenerationSummary[];
 }
 
+// ============================================================================
+// Unified Solar Generation & Fleet Aggregation Contracts (Milestone G2C)
+// ============================================================================
+
+export type ModeledSolarResourceMode =
+  | 'clear_sky'
+  | 'monthly_peak_sun_hours';
+
+export interface SolarGenerationInterval {
+  assetId: string;
+  timestampUtc: string;
+  resourceMode: ModeledSolarResourceMode;
+
+  position: SolarPosition;
+
+  ghiKwPerM2: number;
+  dniKwPerM2: number;
+  poaKwPerM2: number;
+
+  rawDcPowerKw: number;
+  dcPowerAfterLossesKw: number;
+
+  unclippedAcPowerKw: number;
+  acPowerKw: number;
+
+  dcEnergyKwh: number;
+  acEnergyKwh: number;
+  clippedEnergyKwh: number;
+}
+
+export interface SolarFleetGenerationInterval {
+  timestampUtc: string;
+
+  totalRawDcPowerKw: number;
+  totalDcPowerAfterLossesKw: number;
+
+  totalUnclippedAcPowerKw: number;
+  totalAcPowerKw: number;
+
+  totalDcEnergyKwh: number;
+  totalAcEnergyKwh: number;
+  totalClippedEnergyKwh: number;
+}
+
