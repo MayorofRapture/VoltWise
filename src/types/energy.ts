@@ -845,6 +845,71 @@ export interface GridBatteryChargeResult {
   stateAfter: BatterySocProvenanceState;
 }
 
+// ============================================================================
+// Integrated Sequential Solar/Grid/Battery Flow Contracts (Milestone G3H)
+// ============================================================================
+
+export interface IntegratedBatteryFlowInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+  tierId: string;
+
+  homeLoadKwh: number;
+  solarGenerationKwh: number;
+  solarDirectToLoadKwh: number;
+
+  residualHomeLoadBeforeBatteryKwh: number;
+  surplusSolarBeforeBatteryKwh: number;
+
+  gridChargeAllowed: boolean;
+  dischargeAllowed: boolean;
+
+  solarToBatteryAcKwh: number;
+  renewableEnergyStoredKwh: number;
+
+  requestedGridChargeAcKwh: number;
+  gridToBatteryAcKwh: number;
+  gridEnergyStoredKwh: number;
+
+  batteryDeliveredToLoadKwh: number;
+  storedEnergyDrainedKwh: number;
+
+  syntheticSocDrainedKwh: number;
+  renewableSocDrainedKwh: number;
+  generatorSocDrainedKwh: number;
+  gridSocDrainedKwh: number;
+
+  residualHomeLoadAfterBatteryKwh: number;
+  remainingSurplusSolarKwh: number;
+
+  batterySocBeforeKwh: number;
+  batterySocAfterKwh: number;
+
+  stateBefore: BatterySocProvenanceState;
+  stateAfter: BatterySocProvenanceState;
+}
+
+export interface IntegratedBatteryFlowResult {
+  intervals: IntegratedBatteryFlowInterval[];
+
+  initialState: BatterySocProvenanceState;
+  finalState: BatterySocProvenanceState;
+
+  totalSolarToBatteryAcKwh: number;
+  totalRenewableEnergyStoredKwh: number;
+
+  totalGridToBatteryAcKwh: number;
+  totalGridEnergyStoredKwh: number;
+
+  totalBatteryDeliveredToLoadKwh: number;
+  totalStoredEnergyDrainedKwh: number;
+
+  totalResidualHomeLoadAfterBatteryKwh: number;
+  totalRemainingSurplusSolarKwh: number;
+}
+
+
 
 
 
