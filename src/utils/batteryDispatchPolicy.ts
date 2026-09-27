@@ -1,10 +1,12 @@
 /**
- * TOU Battery Discharge Policy Generator (Milestone G3E)
+ * TOU Battery Dispatch Policy Generator (Milestones G3E, G3G)
  *
  * Converts aligned UTC timestamps, site timezone, 7x24 TOU schedule matrix,
- * and battery discharge tiers configuration into authoritative G3D discharge directives.
+ * and battery configuration (chargeTiers, dischargeTiers) into authoritative
+ * dispatch directives for both grid charging and battery discharging.
  *
  * Preserves the current VoltWise simulation rule:
+ *   allowGridChargeFromGrid = profile.chargeTiers.includes(tierId)
  *   allowBatteryDischargeToLoad = profile.dischargeTiers.includes(tierId)
  * for both 'arbitrage' and 'self_consumption' strategies.
  */
@@ -50,12 +52,12 @@ function extractLocalClock(
 }
 
 /**
- * Generates G3D battery discharge directives from aligned timestamps, site timezone,
- * schedule matrix, and battery profile discharge tiers.
+ * Generates unified TOU dispatch directives for both grid-charging and battery-discharging
+ * from aligned timestamps, site timezone, schedule matrix, and battery profile.
  *
  * Pure function: does not mutate its inputs.
  */
-export function generateBatteryDischargePolicy(
+export function generateBatteryDispatchPolicy(
   alignedTimestamps: AlignedLoadTimestamp[],
   timeZone: string,
   scheduleMatrix: string[][],
@@ -123,6 +125,21 @@ export function generateBatteryDischargePolicy(
     }
   }
 
+  if (!Array.isArray(profile.chargeTiers)) {
+    throw new Error(
+      `profile.chargeTiers must be an array of strings. Received: ${typeof profile.chargeTiers}`
+    );
+  }
+
+  for (let i = 0; i < profile.chargeTiers.length; i++) {
+    const tier = profile.chargeTiers[i];
+    if (typeof tier !== 'string' || tier.trim() === '') {
+      throw new Error(
+        `profile.chargeTiers entry at index ${i} must be a non-empty string. Received: ${tier}`
+      );
+    }
+  }
+
   // Initialize Intl.DateTimeFormat for the site timezone
   const dtf = new Intl.DateTimeFormat('en-US', {
     timeZone: timeZone.trim(),
@@ -168,6 +185,7 @@ export function generateBatteryDischargePolicy(
     const { dayOfWeek, hour } = extractLocalClock(item.instantUtc, dtf);
 
     const tierId = scheduleMatrix[dayOfWeek][hour];
+    const allowGridChargeFromGrid = profile.chargeTiers.includes(tierId);
     const allowBatteryDischargeToLoad = profile.dischargeTiers.includes(tierId);
 
     result[i] = {
@@ -177,8 +195,27 @@ export function generateBatteryDischargePolicy(
       hour,
       tierId,
       allowBatteryDischargeToLoad,
+      allowGridChargeFromGrid,
     };
   }
 
   return result;
+}
+
+/**
+ * Backwards-compatible public wrapper for G3E callers.
+ * Thin wrapper around generateBatteryDispatchPolicy.
+ */
+export function generateBatteryDischargePolicy(
+  alignedTimestamps: AlignedLoadTimestamp[],
+  timeZone: string,
+  scheduleMatrix: string[][],
+  profile: BatteryProfile
+): BatteryDispatchPolicyInterval[] {
+  return generateBatteryDispatchPolicy(
+    alignedTimestamps,
+    timeZone,
+    scheduleMatrix,
+    profile
+  );
 }

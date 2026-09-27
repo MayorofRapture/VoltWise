@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { generateBatteryDischargePolicy } from '../utils/batteryDispatchPolicy';
+import {
+  generateBatteryDischargePolicy,
+  generateBatteryDispatchPolicy,
+} from '../utils/batteryDispatchPolicy';
 import { routeSequentialSolarBatteryFlow } from '../utils/sequentialBatteryFlow';
 import {
   BatteryProfile,
@@ -664,3 +667,439 @@ describe('G3E — TOU Battery Discharge Policy', () => {
     });
   });
 });
+
+describe('G3G — Unified TOU Grid-Charge / Battery-Discharge Policy', () => {
+  describe('A. Explicit charge tier', () => {
+    it('sets allowGridChargeFromGrid to true when interval resolves to tier in chargeTiers', () => {
+      const schedule = createUniformScheduleMatrix('on-peak');
+      schedule[0][3] = 'off-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T03:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['on-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy).toHaveLength(1);
+      expect(policy[0].tierId).toBe('off-peak');
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+      expect(policy[0].allowBatteryDischargeToLoad).toBe(false);
+    });
+  });
+
+  describe('B. Non-charge tier', () => {
+    it('sets allowGridChargeFromGrid to false when interval resolves to tier not in chargeTiers', () => {
+      const schedule = createUniformScheduleMatrix('on-peak');
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T15:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['off-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].tierId).toBe('on-peak');
+      expect(policy[0].allowGridChargeFromGrid).toBe(false);
+    });
+  });
+
+  describe('C. Empty charge tiers', () => {
+    it('sets allowGridChargeFromGrid to false for every interval when chargeTiers is empty', () => {
+      const schedule = createUniformScheduleMatrix('off-peak');
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T01:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T02:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: [],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].allowGridChargeFromGrid).toBe(false);
+      expect(policy[1].allowGridChargeFromGrid).toBe(false);
+    });
+  });
+
+  describe('D. Multiple charge tiers', () => {
+    it('allows grid charging when interval matches any configured charge tier', () => {
+      const schedule = createUniformScheduleMatrix('peak');
+      schedule[0][1] = 'super-off-peak';
+      schedule[0][2] = 'off-peak';
+      schedule[0][3] = 'shoulder';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T01:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T02:00:00.000Z'),
+        createAlignedTimestamp(2, '2025-06-01T03:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['super-off-peak', 'off-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+      expect(policy[1].allowGridChargeFromGrid).toBe(true);
+      expect(policy[2].allowGridChargeFromGrid).toBe(false);
+    });
+  });
+
+  describe('E. Arbitrage charge policy', () => {
+    it('follows configured charge tiers when strategy is arbitrage', () => {
+      const schedule = createUniformScheduleMatrix('on-peak');
+      schedule[0][4] = 'off-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T04:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+    });
+  });
+
+  describe('F. Self-consumption charge-policy parity', () => {
+    it('currently follows the same explicit chargeTiers constraint for self_consumption', () => {
+      const schedule = createUniformScheduleMatrix('on-peak');
+      schedule[0][4] = 'off-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T04:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T12:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        strategy: 'self_consumption',
+        chargeTiers: ['off-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+      expect(policy[1].allowGridChargeFromGrid).toBe(false);
+    });
+  });
+
+  describe('G. Independent charge/discharge permissions', () => {
+    it('reports charge and discharge permissions independently per configured tiers', () => {
+      const schedule = createUniformScheduleMatrix('shoulder');
+      schedule[0][2] = 'off-peak';
+      schedule[0][18] = 'on-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T02:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T18:00:00.000Z'),
+        createAlignedTimestamp(2, '2025-06-01T12:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['on-peak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      // off-peak: charge = true, discharge = false
+      expect(policy[0].tierId).toBe('off-peak');
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+      expect(policy[0].allowBatteryDischargeToLoad).toBe(false);
+
+      // on-peak: charge = false, discharge = true
+      expect(policy[1].tierId).toBe('on-peak');
+      expect(policy[1].allowGridChargeFromGrid).toBe(false);
+      expect(policy[1].allowBatteryDischargeToLoad).toBe(true);
+
+      // shoulder: charge = false, discharge = false
+      expect(policy[2].tierId).toBe('shoulder');
+      expect(policy[2].allowGridChargeFromGrid).toBe(false);
+      expect(policy[2].allowBatteryDischargeToLoad).toBe(false);
+    });
+  });
+
+  describe('H. Overlapping tier', () => {
+    it('returns true for both permissions when a tier is configured in both chargeTiers and dischargeTiers', () => {
+      const schedule = createUniformScheduleMatrix('off-peak');
+      schedule[0][14] = 'shoulder';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T14:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['shoulder'],
+        dischargeTiers: ['shoulder'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].tierId).toBe('shoulder');
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+      expect(policy[0].allowBatteryDischargeToLoad).toBe(true);
+    });
+  });
+
+  describe('I. Backwards-compatible wrapper', () => {
+    it('produces identical results from generateBatteryDischargePolicy and generateBatteryDispatchPolicy', () => {
+      const schedule = createUniformScheduleMatrix('off-peak');
+      schedule[0][17] = 'on-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T04:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T17:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['on-peak'],
+      });
+
+      const dispatchPolicy = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+      const dischargePolicy = generateBatteryDischargePolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      expect(dispatchPolicy).toEqual(dischargePolicy);
+    });
+  });
+
+  describe('J. G3D compatibility', () => {
+    it('allows output of generateBatteryDispatchPolicy to pass directly into G3D routeSequentialSolarBatteryFlow', () => {
+      const schedule = createUniformScheduleMatrix('off-peak');
+      schedule[0][17] = 'on-peak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T17:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T18:00:00.000Z'),
+      ];
+
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['on-peak'],
+      });
+
+      // generateBatteryDispatchPolicy returns BatteryDispatchPolicyInterval[]
+      // which implements both BatteryDischargeDirective and BatteryGridChargeDirective
+      const directives = generateBatteryDispatchPolicy(
+        timestamps,
+        'UTC',
+        schedule,
+        profile
+      );
+
+      const intervals: SolarLoadFlowInterval[] = [
+        {
+          sourceIndex: 0,
+          sourceTimestamp: '2025-06-01 17:00',
+          timestampUtc: '2025-06-01T17:00:00.000Z',
+          homeLoadKwh: 2,
+          solarGenerationKwh: 0,
+          solarDirectToLoadKwh: 0,
+          residualHomeLoadKwh: 2,
+          surplusSolarKwh: 0,
+        },
+        {
+          sourceIndex: 1,
+          sourceTimestamp: '2025-06-01 18:00',
+          timestampUtc: '2025-06-01T18:00:00.000Z',
+          homeLoadKwh: 2,
+          solarGenerationKwh: 0,
+          solarDirectToLoadKwh: 0,
+          residualHomeLoadKwh: 2,
+          surplusSolarKwh: 0,
+        },
+      ];
+
+      const initialState: BatterySocProvenanceState = {
+        syntheticSocKwh: 5,
+        gridChargedSocKwh: 0,
+        renewableChargedSocKwh: 0,
+        generatorChargedSocKwh: 0,
+      };
+
+      const result = routeSequentialSolarBatteryFlow(
+        intervals,
+        directives,
+        1.0,
+        profile,
+        initialState
+      );
+
+      // On-peak: discharge was permitted by G3D
+      expect(result.intervals[0].dischargeAllowed).toBe(true);
+      expect(result.intervals[0].batteryDeliveredToLoadKwh).toBe(2);
+
+      // Off-peak: discharge was forbidden
+      expect(result.intervals[1].dischargeAllowed).toBe(false);
+      expect(result.intervals[1].batteryDeliveredToLoadKwh).toBe(0);
+    });
+  });
+
+  describe('K. Invalid charge tiers', () => {
+    const schedule = createUniformScheduleMatrix();
+    const timestamps = [
+      createAlignedTimestamp(0, '2025-06-01T12:00:00.000Z'),
+    ];
+
+    it('rejects non-array chargeTiers', () => {
+      const profile = createMockBatteryProfile({
+        chargeTiers: 'off-peak' as unknown as string[],
+      });
+      expect(() =>
+        generateBatteryDispatchPolicy(timestamps, 'UTC', schedule, profile)
+      ).toThrow(/chargeTiers must be an array of strings/i);
+    });
+
+    it('rejects empty or whitespace tier in chargeTiers', () => {
+      const profileEmpty = createMockBatteryProfile({
+        chargeTiers: ['off-peak', ''],
+      });
+      expect(() =>
+        generateBatteryDispatchPolicy(timestamps, 'UTC', schedule, profileEmpty)
+      ).toThrow(/must be a non-empty string/i);
+
+      const profileWs = createMockBatteryProfile({
+        chargeTiers: ['   '],
+      });
+      expect(() =>
+        generateBatteryDispatchPolicy(timestamps, 'UTC', schedule, profileWs)
+      ).toThrow(/must be a non-empty string/i);
+    });
+
+    it('rejects non-string tier in chargeTiers', () => {
+      const profileNum = createMockBatteryProfile({
+        chargeTiers: [99 as unknown as string],
+      });
+      expect(() =>
+        generateBatteryDispatchPolicy(timestamps, 'UTC', schedule, profileNum)
+      ).toThrow(/must be a non-empty string/i);
+    });
+
+    it('accepts empty array for chargeTiers', () => {
+      const profileEmptyArr = createMockBatteryProfile({
+        chargeTiers: [],
+      });
+      expect(() =>
+        generateBatteryDispatchPolicy(timestamps, 'UTC', schedule, profileEmptyArr)
+      ).not.toThrow();
+    });
+  });
+
+  describe('L. Existing timezone/DST regressions', () => {
+    it('evaluates grid charging against the local wall-clock tier in America/Detroit', () => {
+      // 2025-06-01T12:00:00.000Z is 08:00 EDT (hour 8)
+      const schedule = createUniformScheduleMatrix('peak');
+      schedule[0][8] = 'detroit-morning-offpeak';
+
+      const timestamps = [
+        createAlignedTimestamp(0, '2025-06-01T12:00:00.000Z'),
+      ];
+      const profile = createMockBatteryProfile({
+        chargeTiers: ['detroit-morning-offpeak'],
+      });
+
+      const policy = generateBatteryDispatchPolicy(
+        timestamps,
+        'America/Detroit',
+        schedule,
+        profile
+      );
+
+      expect(policy[0].hour).toBe(8);
+      expect(policy[0].tierId).toBe('detroit-morning-offpeak');
+      expect(policy[0].allowGridChargeFromGrid).toBe(true);
+    });
+  });
+
+  describe('M. Input immutability', () => {
+    it('does not mutate frozen inputs including chargeTiers and dischargeTiers', () => {
+      const rawTimestamps = [
+        createAlignedTimestamp(0, '2025-06-01T12:00:00.000Z'),
+        createAlignedTimestamp(1, '2025-06-01T13:00:00.000Z'),
+      ];
+      const frozenTimestamps = Object.freeze([
+        Object.freeze(rawTimestamps[0]),
+        Object.freeze(rawTimestamps[1]),
+      ]);
+
+      const rawSchedule = createUniformScheduleMatrix('off-peak');
+      const frozenSchedule = Object.freeze(
+        rawSchedule.map((row) => Object.freeze([...row]))
+      );
+
+      const frozenChargeTiers = Object.freeze(['off-peak']);
+      const frozenDischargeTiers = Object.freeze(['on-peak']);
+      const profile = Object.freeze(
+        createMockBatteryProfile({
+          chargeTiers: frozenChargeTiers as unknown as string[],
+          dischargeTiers: frozenDischargeTiers as unknown as string[],
+        })
+      );
+
+      expect(() => {
+        generateBatteryDispatchPolicy(
+          frozenTimestamps as unknown as AlignedLoadTimestamp[],
+          'UTC',
+          frozenSchedule as unknown as string[][],
+          profile
+        );
+      }).not.toThrow();
+    });
+  });
+});
+

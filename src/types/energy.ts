@@ -807,11 +807,18 @@ export interface SequentialBatteryFlowResult {
 }
 
 // ============================================================================
-// TOU Battery Discharge Policy Contracts (Milestone G3E)
+// TOU Battery Dispatch Policy Contracts (Milestones G3E, G3G)
 // ============================================================================
 
+export interface BatteryGridChargeDirective {
+  sourceIndex: number;
+  timestampUtc: string;
+  allowGridChargeFromGrid: boolean;
+}
+
 export interface BatteryDispatchPolicyInterval
-  extends BatteryDischargeDirective {
+  extends BatteryDischargeDirective,
+    BatteryGridChargeDirective {
   dayOfWeek: number;
   hour: number;
   tierId: string;
