@@ -2,13 +2,16 @@
  * Monthly Peak-Sun-Hour Solar Profile & Summary Engine (Milestone G2B)
  *
  * Implements deterministic monthly solar-resource scaling:
- * 1. Uses clear-sky solar geometry (NOAA position, clear-sky GHI, DNI, POA).
- * 2. Determines local calendar date and month index for each UTC instant.
- * 3. Normalizes horizontal solar resource (GHI) against user's monthly peak sun hours (kWh/m²/day).
- * 4. Scales DNI and POA by the horizontal resource scale factor, preserving the effects
+ * 1. Requires valid, non-empty IANA time zone for local calendar alignment.
+ * 2. Requires asset.resourceMode === 'monthly_peak_sun_hours' and a valid 12-element PSH array.
+ * 3. Consumes normalized Date[] interval sequences that are strictly increasing, regularly spaced,
+ *    and form complete local calendar days (supporting 23h, 24h, and 25h DST days).
+ * 4. Normalizes horizontal solar resource (GHI) against the user's monthly peak sun hours (kWh/m²/day)
+ *    using the actual supplied intervals for each local day.
+ * 5. Scales DNI and POA by the identical horizontal resource scale factor, preserving the effects
  *    of site latitude, season, daylight duration, panel tilt, and panel azimuth.
- * 5. Applies STC DC capacity, system & shading losses, and inverter AC clipping.
- * 6. Computes monthly and annual generation profile summaries.
+ * 6. Applies STC DC capacity, system & shading losses, and inverter AC clipping.
+ * 7. Computes monthly and annual generation profile summaries.
  */
 
 import {
@@ -47,40 +50,135 @@ function validateSiteCoordinates(site: GenerationSite): void {
 }
 
 /**
+ * Validates that site.timeZone is a non-empty, valid IANA timezone string.
+ *
+ * Throws a clear error if empty or unrecognized by the runtime.
+ */
+export function validateTimeZone(timeZone?: string): string {
+  if (!timeZone || typeof timeZone !== 'string' || timeZone.trim() === '') {
+    throw new Error('Site timeZone must be a non-empty, valid IANA timezone string.');
+  }
+
+  const trimmed = timeZone.trim();
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: trimmed });
+    return trimmed;
+  } catch {
+    throw new Error(`Invalid IANA timeZone: "${timeZone}". Must be a recognized IANA timezone.`);
+  }
+}
+
+/**
+ * Validates that an asset is correctly configured for the monthly_peak_sun_hours resource model.
+ */
+export function validateAssetForMonthlyPsh(asset: SolarGenerationAsset): void {
+  if (!asset) {
+    throw new Error('Asset must be defined.');
+  }
+
+  if (asset.resourceMode !== 'monthly_peak_sun_hours') {
+    throw new Error(
+      `Invalid resourceMode: "${asset.resourceMode}". Expected "monthly_peak_sun_hours".`
+    );
+  }
+
+  if (
+    !Array.isArray(asset.monthlyPeakSunHoursPerDay) ||
+    asset.monthlyPeakSunHoursPerDay.length !== 12
+  ) {
+    throw new Error(
+      `Invalid monthlyPeakSunHoursPerDay: expected an array of exactly 12 values, but got ${
+        Array.isArray(asset.monthlyPeakSunHoursPerDay)
+          ? asset.monthlyPeakSunHoursPerDay.length
+          : typeof asset.monthlyPeakSunHoursPerDay
+      }.`
+    );
+  }
+
+  for (let i = 0; i < 12; i++) {
+    const val = asset.monthlyPeakSunHoursPerDay[i];
+    if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) {
+      throw new Error(
+        `Invalid monthly peak-sun-hour entry at month index ${i}: ${val}. Must be a finite number >= 0.`
+      );
+    }
+  }
+}
+
+/**
  * Extracts local calendar date (YYYY-MM-DD), month index (0-11), year, and day for a given instant.
  *
- * Respects site.timeZone if specified and valid; defaults to UTC if empty or unconfigured.
+ * Mandatory timeZone parameter: throws if empty or not a valid IANA timezone.
  */
 export function getLocalDateAndMonth(
   instantUtc: Date,
-  timeZone?: string
+  timeZone: string
 ): { localDate: string; monthIndex: number; year: number; day: number } {
   if (!instantUtc || isNaN(instantUtc.getTime())) {
     throw new Error('Invalid instantUtc: must be a valid Date object.');
   }
 
-  const tz = timeZone && timeZone.trim() ? timeZone.trim() : 'UTC';
+  const tz = validateTimeZone(timeZone);
 
-  try {
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    const localDate = formatter.format(instantUtc);
-    const [yStr, mStr, dStr] = localDate.split('-');
-    const year = parseInt(yStr, 10);
-    const monthIndex = parseInt(mStr, 10) - 1;
-    const day = parseInt(dStr, 10);
-    return { localDate, monthIndex, year, day };
-  } catch {
-    const year = instantUtc.getUTCFullYear();
-    const monthIndex = instantUtc.getUTCMonth();
-    const day = instantUtc.getUTCDate();
-    const localDate = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return { localDate, monthIndex, year, day };
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const localDate = formatter.format(instantUtc);
+  const [yStr, mStr, dStr] = localDate.split('-');
+  const year = parseInt(yStr, 10);
+  const monthIndex = parseInt(mStr, 10) - 1;
+  const day = parseInt(dStr, 10);
+
+  return { localDate, monthIndex, year, day };
+}
+
+/**
+ * Extracts detailed local date and time parts (year, month, day, hour, minute, second) for a Date.
+ */
+function getLocalTimeParts(
+  date: Date,
+  timeZone: string
+): {
+  localDate: string;
+  monthIndex: number;
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts = dtf.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    map[p.type] = p.value;
   }
+
+  const year = parseInt(map.year, 10);
+  const month = parseInt(map.month, 10);
+  const day = parseInt(map.day, 10);
+  const hour = parseInt(map.hour, 10);
+  const minute = parseInt(map.minute, 10);
+  const second = parseInt(map.second, 10);
+  const localDate = `${map.year}-${map.month}-${map.day}`;
+  const monthIndex = month - 1;
+
+  return { localDate, monthIndex, year, month, day, hour, minute, second };
 }
 
 /**
@@ -93,46 +191,42 @@ export function localTimeToUtc(
   hour: number,
   minute: number,
   second: number,
-  timeZone?: string
+  timeZone: string
 ): Date {
-  const tz = timeZone && timeZone.trim() ? timeZone.trim() : 'UTC';
+  const tz = validateTimeZone(timeZone);
 
   if (tz === 'UTC' || tz === 'Etc/UTC') {
     return new Date(Date.UTC(year, month1Indexed - 1, day, hour, minute, second));
   }
 
-  try {
-    const approx = new Date(Date.UTC(year, month1Indexed - 1, day, hour, minute, second));
-    const dtf = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    });
-    const parts = dtf.formatToParts(approx);
-    const map: Record<string, string> = {};
-    for (const p of parts) {
-      map[p.type] = p.value;
-    }
-    const asTz = new Date(
-      Date.UTC(
-        parseInt(map.year, 10),
-        parseInt(map.month, 10) - 1,
-        parseInt(map.day, 10),
-        parseInt(map.hour, 10),
-        parseInt(map.minute, 10),
-        parseInt(map.second, 10)
-      )
-    );
-    const diffMs = approx.getTime() - asTz.getTime();
-    return new Date(approx.getTime() + diffMs);
-  } catch {
-    return new Date(Date.UTC(year, month1Indexed - 1, day, hour, minute, second));
+  const approx = new Date(Date.UTC(year, month1Indexed - 1, day, hour, minute, second));
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  });
+  const parts = dtf.formatToParts(approx);
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    map[p.type] = p.value;
   }
+  const asTz = new Date(
+    Date.UTC(
+      parseInt(map.year, 10),
+      parseInt(map.month, 10) - 1,
+      parseInt(map.day, 10),
+      parseInt(map.hour, 10),
+      parseInt(map.minute, 10),
+      parseInt(map.second, 10)
+    )
+  );
+  const diffMs = approx.getTime() - asTz.getTime();
+  return new Date(approx.getTime() + diffMs);
 }
 
 /**
@@ -164,7 +258,8 @@ function getClearSkyGhiAtInstant(instantUtc: Date, site: GenerationSite): number
 }
 
 /**
- * Calculates the clear-sky daily horizontal solar energy (GHI) integral for a given local date.
+ * Standalone utility to calculate clear-sky daily horizontal solar energy (GHI) integral
+ * for a given local date.
  *
  * Result is in kWh/m²/day.
  */
@@ -174,6 +269,7 @@ export function calculateDailyClearSkyGhiKwhPerM2(
   options?: { stepMinutes?: number; timeZone?: string }
 ): number {
   validateSiteCoordinates(site);
+  const tz = validateTimeZone(options?.timeZone || site.timeZone);
 
   const [yearStr, monthStr, dayStr] = localDateStr.split('-');
   const year = parseInt(yearStr, 10);
@@ -184,7 +280,6 @@ export function calculateDailyClearSkyGhiKwhPerM2(
     throw new Error(`Invalid localDateStr: ${localDateStr}. Must be YYYY-MM-DD.`);
   }
 
-  const tz = options?.timeZone || site.timeZone || 'UTC';
   const stepMinutes = options?.stepMinutes ?? 15;
   if (stepMinutes <= 0 || !Number.isFinite(stepMinutes)) {
     throw new Error(`Invalid stepMinutes: ${stepMinutes}. Must be greater than 0.`);
@@ -233,22 +328,26 @@ export function calculateMonthlyPeakSunHourSolarInterval(
   }
 
   validateSiteCoordinates(site);
+  const tz = validateTimeZone(site.timeZone);
+  validateAssetForMonthlyPsh(asset);
 
-  const { localDate, monthIndex } = getLocalDateAndMonth(instantUtc, site.timeZone);
-  const targetPeakSunHoursPerDay = Math.max(0, asset.monthlyPeakSunHoursPerDay[monthIndex] ?? 0);
+  const { localDate, monthIndex } = getLocalDateAndMonth(instantUtc, tz);
+  const targetPeakSunHoursPerDay = asset.monthlyPeakSunHoursPerDay[monthIndex];
 
   let resourceScaleFactor = 0;
 
   if (typeof optionsOrDailyGhi === 'number') {
     const dailyGhi = optionsOrDailyGhi;
-    resourceScaleFactor = dailyGhi > 0 && targetPeakSunHoursPerDay > 0 ? targetPeakSunHoursPerDay / dailyGhi : 0;
+    resourceScaleFactor =
+      dailyGhi > 0 && targetPeakSunHoursPerDay > 0 ? targetPeakSunHoursPerDay / dailyGhi : 0;
   } else if (optionsOrDailyGhi && typeof optionsOrDailyGhi.resourceScaleFactor === 'number') {
     resourceScaleFactor = Math.max(0, optionsOrDailyGhi.resourceScaleFactor);
   } else if (optionsOrDailyGhi && typeof optionsOrDailyGhi.dailyClearSkyGhiKwhPerM2 === 'number') {
     const dailyGhi = optionsOrDailyGhi.dailyClearSkyGhiKwhPerM2;
-    resourceScaleFactor = dailyGhi > 0 && targetPeakSunHoursPerDay > 0 ? targetPeakSunHoursPerDay / dailyGhi : 0;
+    resourceScaleFactor =
+      dailyGhi > 0 && targetPeakSunHoursPerDay > 0 ? targetPeakSunHoursPerDay / dailyGhi : 0;
   } else {
-    const dailyClearSkyGhi = calculateDailyClearSkyGhiKwhPerM2(localDate, site);
+    const dailyClearSkyGhi = calculateDailyClearSkyGhiKwhPerM2(localDate, site, { timeZone: tz });
     resourceScaleFactor =
       dailyClearSkyGhi > 0 && targetPeakSunHoursPerDay > 0
         ? targetPeakSunHoursPerDay / dailyClearSkyGhi
@@ -284,99 +383,188 @@ export function calculateMonthlyPeakSunHourSolarInterval(
   };
 }
 
-export type ProfileIntervalInput =
-  | Date
-  | string
-  | { timestampUtc?: string | Date; timestamp?: string | Date; intervalHours?: number };
+interface LocalIntervalData {
+  instant: Date;
+  localDate: string;
+  monthIndex: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+interface LocalDayGroup {
+  localDate: string;
+  monthIndex: number;
+  intervals: LocalIntervalData[];
+}
 
 /**
- * Generates an interval solar generation profile for a series of UTC timestamps
- * under the monthly_peak_sun_hours resource model.
+ * Validates interval sequence and complete local calendar days, grouping intervals by day.
+ */
+function validateAndGroupCompleteLocalDays(
+  instantsUtc: Date[],
+  intervalHours: number,
+  timeZone: string
+): LocalDayGroup[] {
+  if (!instantsUtc || instantsUtc.length === 0) {
+    throw new Error('instantsUtc must contain at least one timestamp.');
+  }
+
+  if (intervalHours <= 0 || !Number.isFinite(intervalHours)) {
+    throw new Error(`Invalid intervalHours: ${intervalHours}. Must be greater than 0.`);
+  }
+
+  const expectedStepMs = Math.round(intervalHours * 3600 * 1000);
+
+  // 1. Validate Date objects, strict monotonicity, and regular spacing
+  for (let i = 0; i < instantsUtc.length; i++) {
+    const d = instantsUtc[i];
+    if (!(d instanceof Date) || isNaN(d.getTime())) {
+      throw new Error(`Invalid Date object at index ${i}.`);
+    }
+
+    if (i > 0) {
+      const diffMs = d.getTime() - instantsUtc[i - 1].getTime();
+      if (diffMs <= 0) {
+        throw new Error(
+          `Timestamps must be strictly increasing. Duplicate or out-of-order timestamp at index ${i}: ${d.toISOString()}.`
+        );
+      }
+      if (Math.abs(diffMs - expectedStepMs) > 1) {
+        throw new Error(
+          `Irregular interval spacing at index ${i}: expected step of ${expectedStepMs}ms (${intervalHours}h), but got ${diffMs}ms.`
+        );
+      }
+    }
+  }
+
+  // 2. Extract local time parts in the validated timezone
+  const intervalDataList: LocalIntervalData[] = instantsUtc.map((instant) => {
+    const parts = getLocalTimeParts(instant, timeZone);
+    return {
+      instant,
+      localDate: parts.localDate,
+      monthIndex: parts.monthIndex,
+      hour: parts.hour,
+      minute: parts.minute,
+      second: parts.second,
+    };
+  });
+
+  // 3. Group consecutive intervals into local calendar days
+  const dayGroups: LocalDayGroup[] = [];
+  let currentGroup: LocalDayGroup | null = null;
+
+  for (const item of intervalDataList) {
+    if (!currentGroup || currentGroup.localDate !== item.localDate) {
+      currentGroup = {
+        localDate: item.localDate,
+        monthIndex: item.monthIndex,
+        intervals: [item],
+      };
+      dayGroups.push(currentGroup);
+    } else {
+      currentGroup.intervals.push(item);
+    }
+  }
+
+  // 4. Verify each local calendar day is complete
+  for (const group of dayGroups) {
+    const firstInterval = group.intervals[0];
+    if (
+      firstInterval.hour !== 0 ||
+      firstInterval.minute !== 0 ||
+      firstInterval.second !== 0
+    ) {
+      throw new Error(
+        `Incomplete local day: day ${group.localDate} does not start at local 00:00:00 (first interval is at ${String(firstInterval.hour).padStart(2, '0')}:${String(firstInterval.minute).padStart(2, '0')}).`
+      );
+    }
+
+    const lastInterval = group.intervals[group.intervals.length - 1];
+    const nextInstant = new Date(lastInterval.instant.getTime() + expectedStepMs);
+    const nextParts = getLocalTimeParts(nextInstant, timeZone);
+
+    if (
+      nextParts.hour !== 0 ||
+      nextParts.minute !== 0 ||
+      nextParts.second !== 0 ||
+      nextParts.localDate === group.localDate
+    ) {
+      throw new Error(
+        `Incomplete local day: day ${group.localDate} does not end at the boundary of the following local day (ended prematurely after ${group.intervals.length} intervals).`
+      );
+    }
+  }
+
+  return dayGroups;
+}
+
+/**
+ * Authoritative public profile generator for the monthly_peak_sun_hours resource model.
  *
- * Supports overloaded calling conventions:
- * - (instants: Date[], intervalHours: number, site: GenerationSite, asset: SolarGenerationAsset)
- * - (intervals: ProfileIntervalInput[], site: GenerationSite, asset: SolarGenerationAsset, defaultIntervalHours?: number)
+ * Normalizes horizontal solar irradiance (GHI) against the configured monthly peak sun hours
+ * using the actual supplied intervals for each complete local calendar day.
  */
 export function generateMonthlyPeakSunHourSolarProfile(
-  instants: Date[],
+  instantsUtc: Date[],
   intervalHours: number,
   site: GenerationSite,
   asset: SolarGenerationAsset
-): MonthlyPeakSunHourSolarInterval[];
-
-export function generateMonthlyPeakSunHourSolarProfile(
-  intervals: ProfileIntervalInput[],
-  site: GenerationSite,
-  asset: SolarGenerationAsset,
-  defaultIntervalHours?: number
-): MonthlyPeakSunHourSolarInterval[];
-
-export function generateMonthlyPeakSunHourSolarProfile(
-  arg1: ProfileIntervalInput[],
-  arg2: number | GenerationSite,
-  arg3: GenerationSite | SolarGenerationAsset,
-  arg4?: SolarGenerationAsset | number
 ): MonthlyPeakSunHourSolarInterval[] {
-  let rawIntervals: ProfileIntervalInput[];
-  let site: GenerationSite;
-  let asset: SolarGenerationAsset;
-  let defaultIntervalHours: number;
-
-  if (typeof arg2 === 'number') {
-    rawIntervals = arg1;
-    defaultIntervalHours = arg2;
-    site = arg3 as GenerationSite;
-    asset = arg4 as SolarGenerationAsset;
-  } else {
-    rawIntervals = arg1;
-    site = arg2 as GenerationSite;
-    asset = arg3 as SolarGenerationAsset;
-    defaultIntervalHours = typeof arg4 === 'number' ? arg4 : 1.0;
-  }
-
-  if (!rawIntervals || rawIntervals.length === 0) {
-    return [];
-  }
-
   validateSiteCoordinates(site);
+  const timeZone = validateTimeZone(site.timeZone);
+  validateAssetForMonthlyPsh(asset);
 
-  // Cache daily clear-sky GHI integral per localDate to avoid redundant calculation
-  const dailyGhiCache = new Map<string, number>();
+  const dayGroups = validateAndGroupCompleteLocalDays(instantsUtc, intervalHours, timeZone);
 
   const results: MonthlyPeakSunHourSolarInterval[] = [];
 
-  for (const item of rawIntervals) {
-    let date: Date;
-    let dt = defaultIntervalHours;
+  for (const group of dayGroups) {
+    // 1. Calculate clear-sky result for each actual interval in the day
+    const dayClearSkyResults = group.intervals.map((item) => ({
+      item,
+      clearSky: calculateClearSkySolarInterval(item.instant, intervalHours, site, asset),
+    }));
 
-    if (item instanceof Date) {
-      date = item;
-    } else if (typeof item === 'string') {
-      date = new Date(item);
-    } else if (typeof item === 'object' && item !== null) {
-      const rawTs = item.timestampUtc ?? item.timestamp;
-      date = rawTs instanceof Date ? rawTs : new Date(rawTs as string);
-      if (typeof item.intervalHours === 'number' && item.intervalHours > 0) {
-        dt = item.intervalHours;
-      }
-    } else {
-      continue;
+    // 2. Sum clear-sky GHI energy over the actual supplied intervals
+    const clearSkyDailyGhi = dayClearSkyResults.reduce(
+      (sum, { clearSky }) => sum + clearSky.clearSkyGhiKwPerM2 * intervalHours,
+      0
+    );
+
+    // 3. Resolve target daily GHI from asset's local calendar month
+    const targetDailyGhi = asset.monthlyPeakSunHoursPerDay[group.monthIndex];
+
+    // 4. Calculate exact daily resource scale factor
+    const resourceScaleFactor =
+      targetDailyGhi > 0 && clearSkyDailyGhi > 0 ? targetDailyGhi / clearSkyDailyGhi : 0;
+
+    // 5. Apply scaling to each interval in the day
+    for (const { item, clearSky } of dayClearSkyResults) {
+      const clearSkyPoaKwPerM2 = clearSky.planeOfArrayIrradianceKwPerM2;
+      const modeledGhiKwPerM2 = clearSky.clearSkyGhiKwPerM2 * resourceScaleFactor;
+      const modeledDniKwPerM2 = clearSky.clearSkyDniKwPerM2 * resourceScaleFactor;
+      const modeledPoaKwPerM2 = clearSkyPoaKwPerM2 * resourceScaleFactor;
+
+      const pvOutput = calculatePvOutputFromPoa(modeledPoaKwPerM2, intervalHours, asset);
+
+      results.push({
+        timestampUtc: item.instant.toISOString(),
+        localDate: item.localDate,
+        monthIndex: item.monthIndex,
+        targetPeakSunHoursPerDay: targetDailyGhi,
+        resourceScaleFactor,
+        position: clearSky.position,
+        clearSkyGhiKwPerM2: clearSky.clearSkyGhiKwPerM2,
+        clearSkyDniKwPerM2: clearSky.clearSkyDniKwPerM2,
+        clearSkyPoaKwPerM2,
+        modeledGhiKwPerM2,
+        modeledDniKwPerM2,
+        modeledPoaKwPerM2,
+        ...pvOutput,
+      });
     }
-
-    if (!date || isNaN(date.getTime())) {
-      throw new Error(`Invalid timestamp in interval: ${JSON.stringify(item)}`);
-    }
-
-    const { localDate } = getLocalDateAndMonth(date, site.timeZone);
-
-    let dailyGhi = dailyGhiCache.get(localDate);
-    if (dailyGhi === undefined) {
-      dailyGhi = calculateDailyClearSkyGhiKwhPerM2(localDate, site);
-      dailyGhiCache.set(localDate, dailyGhi);
-    }
-
-    const result = calculateMonthlyPeakSunHourSolarInterval(date, dt, site, asset, dailyGhi);
-    results.push(result);
   }
 
   return results;
