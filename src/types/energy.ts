@@ -678,3 +678,46 @@ export interface SolarLoadFlowSummary {
   solarLoadCoveragePercent: number;
 }
 
+// ============================================================================
+// Surplus Solar to Battery Charging Contracts (Milestone G3B)
+// ============================================================================
+
+export interface BatterySocProvenanceState {
+  syntheticSocKwh: number;
+  gridChargedSocKwh: number;
+  renewableChargedSocKwh: number;
+  generatorChargedSocKwh: number;
+}
+
+export interface SolarBatteryChargeInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+
+  residualHomeLoadKwh: number;
+
+  surplusSolarAvailableKwh: number;
+
+  solarToBatteryAcKwh: number;
+  renewableEnergyStoredKwh: number;
+
+  remainingSurplusSolarKwh: number;
+
+  batterySocBeforeKwh: number;
+  batterySocAfterKwh: number;
+
+  renewableSocBeforeKwh: number;
+  renewableSocAfterKwh: number;
+}
+
+export interface SolarBatteryChargeResult {
+  intervals: SolarBatteryChargeInterval[];
+
+  initialState: BatterySocProvenanceState;
+  finalState: BatterySocProvenanceState;
+
+  totalSolarToBatteryAcKwh: number;
+  totalRenewableEnergyStoredKwh: number;
+  totalRemainingSurplusSolarKwh: number;
+}
+
