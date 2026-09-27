@@ -806,4 +806,16 @@ export interface SequentialBatteryFlowResult {
   totalRemainingSurplusSolarKwh: number;
 }
 
+// ============================================================================
+// TOU Battery Discharge Policy Contracts (Milestone G3E)
+// ============================================================================
+
+export interface BatteryDispatchPolicyInterval
+  extends BatteryDischargeDirective {
+  dayOfWeek: number;
+  hour: number;
+  tierId: string;
+}
+
+
 
