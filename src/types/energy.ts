@@ -721,3 +721,27 @@ export interface SolarBatteryChargeResult {
   totalRemainingSurplusSolarKwh: number;
 }
 
+// ============================================================================
+// Battery Load Discharge Contracts (Milestone G3C)
+// ============================================================================
+
+export interface BatteryLoadDischargeResult {
+  requestedHomeLoadKwh: number;
+
+  batteryDeliveredToLoadKwh: number;
+  unmetHomeLoadKwh: number;
+
+  storedEnergyDrainedKwh: number;
+
+  syntheticSocDrainedKwh: number;
+  renewableSocDrainedKwh: number;
+  generatorSocDrainedKwh: number;
+  gridSocDrainedKwh: number;
+
+  batterySocBeforeKwh: number;
+  batterySocAfterKwh: number;
+
+  stateBefore: BatterySocProvenanceState;
+  stateAfter: BatterySocProvenanceState;
+}
+
