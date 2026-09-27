@@ -944,6 +944,59 @@ export interface GridFlowResult {
   totalGridExportKwh: number;
 }
 
+// ============================================================================
+// TOU / Seasonal Tariff Cost Accounting Contracts (Milestone G3J)
+// ============================================================================
+
+export interface TariffCostInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+
+  tierId: string;
+  tierName: string;
+  seasonName?: string;
+
+  localMonth: number; // 0=Jan .. 11=Dec
+
+  buyRate: number;
+  sellRate: number;
+
+  homeLoadKwh: number;
+
+  gridImportForHomeKwh: number;
+  gridImportForBatteryKwh: number;
+  totalGridImportKwh: number;
+  totalGridExportKwh: number;
+
+  baselineCost: number;
+
+  gridImportForHomeCost: number;
+  gridImportForBatteryCost: number;
+  totalGridImportCost: number;
+
+  gridExportCredit: number;
+
+  simulatedCost: number;
+  netSavings: number;
+}
+
+export interface TariffCostResult {
+  intervals: TariffCostInterval[];
+
+  baselineCost: number;
+
+  gridImportForHomeCost: number;
+  gridImportForBatteryCost: number;
+  totalGridImportCost: number;
+
+  gridExportCredit: number;
+
+  simulatedCost: number;
+  netSavings: number;
+}
+
+
 
 
 
