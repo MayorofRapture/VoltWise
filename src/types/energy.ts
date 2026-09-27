@@ -645,3 +645,36 @@ export interface SolarFleetGenerationInterval {
   totalClippedEnergyKwh: number;
 }
 
+// ============================================================================
+// Solar-to-Load Energy Flow Contracts (Milestone G3A)
+// ============================================================================
+
+export interface SolarLoadFlowInterval {
+  sourceIndex: number;
+
+  sourceTimestamp: string;
+  timestampUtc: string;
+
+  homeLoadKwh: number;
+  solarGenerationKwh: number;
+
+  solarDirectToLoadKwh: number;
+
+  residualHomeLoadKwh: number;
+  surplusSolarKwh: number;
+}
+
+export interface SolarLoadFlowSummary {
+  intervalCount: number;
+
+  totalHomeLoadKwh: number;
+  totalSolarGenerationKwh: number;
+
+  totalSolarDirectToLoadKwh: number;
+  totalResidualHomeLoadKwh: number;
+  totalSurplusSolarKwh: number;
+
+  solarSelfConsumptionPercent: number;
+  solarLoadCoveragePercent: number;
+}
+
