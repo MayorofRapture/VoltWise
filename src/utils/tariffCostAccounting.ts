@@ -2,8 +2,7 @@
  * TOU / Seasonal Tariff Cost Accounting Engine (Milestone G3J)
  *
  * Computes interval-level electricity costs and net savings for VoltWise simulations:
- *   - Resolves active buy and sell rates per interval from base TOU tiers and seasonal overrides.
- *   - Uses site IANA timezone to resolve local calendar month (not UTC or host timezone).
+ *   - Reuses authoritative tariff rate resolution from Milestone G3M (resolveTariffRates).
  *   - Evaluates baseline electricity cost against original household load.
  *   - Evaluates simulated grid import costs for home and battery AC charging.
  *   - Evaluates solar export feed-in credits and simulated net cost.
@@ -20,10 +19,8 @@ import {
   TariffCostResult,
   TouSeason,
 } from '../types/energy';
-import {
-  AlignedLoadTimestamp,
-  isValidIanaTimeZone,
-} from './loadTimeAlignment';
+import { AlignedLoadTimestamp } from './loadTimeAlignment';
+import { resolveTariffRates } from './tariffRateResolver';
 
 /**
  * Calculates interval-by-interval tariff costs, export credits, simulated costs, and net savings.
@@ -68,120 +65,30 @@ export function calculateTariffCosts(
     );
   }
 
-  // 3. Timezone validation
-  if (!isValidIanaTimeZone(timeZone)) {
-    throw new Error(`Invalid or unsupported IANA timeZone: "${timeZone}".`);
-  }
-
-  // 4. RateTier validation
-  if (!Array.isArray(tiers) || tiers.length === 0) {
-    throw new Error('tiers must be a non-empty array.');
-  }
-
-  const tierMap = new Map<string, RateTier>();
-  for (let t = 0; t < tiers.length; t++) {
-    const tier = tiers[t];
-    if (!tier || typeof tier !== 'object') {
-      throw new Error(`Invalid RateTier at index ${t}: must be an object.`);
+  // Energy-flow specific alignment check for gridFlows sourceIndex
+  for (let i = 0; i < length; i++) {
+    const gf = gridFlows[i];
+    if (!gf || typeof gf !== 'object') {
+      throw new Error(`Invalid gridFlow interval at index ${i}: must be an object.`);
     }
-    if (typeof tier.id !== 'string' || tier.id.trim() === '') {
+    if (gf.sourceIndex !== i) {
       throw new Error(
-        `Invalid RateTier at index ${t}: id must be a non-empty string.`
+        `Alignment error at index ${i}: gridFlows sourceIndex is ${gf.sourceIndex}, expected ${i}.`
       );
-    }
-    if (typeof tier.name !== 'string' || tier.name.trim() === '') {
-      throw new Error(
-        `Invalid RateTier at index ${t}: name must be a non-empty string.`
-      );
-    }
-    if (typeof tier.buyRate !== 'number' || !Number.isFinite(tier.buyRate)) {
-      throw new Error(
-        `Invalid RateTier "${tier.id}": buyRate must be a finite number. Received: ${tier.buyRate}`
-      );
-    }
-    if (typeof tier.sellRate !== 'number' || !Number.isFinite(tier.sellRate)) {
-      throw new Error(
-        `Invalid RateTier "${tier.id}": sellRate must be a finite number. Received: ${tier.sellRate}`
-      );
-    }
-    if (tierMap.has(tier.id)) {
-      throw new Error(
-        `Duplicate RateTier ID "${tier.id}" detected in tiers configuration.`
-      );
-    }
-    tierMap.set(tier.id, tier);
-  }
-
-  // 5. TouSeason validation (if provided)
-  if (seasons !== undefined && seasons !== null) {
-    if (!Array.isArray(seasons)) {
-      throw new Error('seasons must be an array when provided.');
-    }
-
-    for (let s = 0; s < seasons.length; s++) {
-      const season = seasons[s];
-      if (!season || typeof season !== 'object') {
-        throw new Error(`Invalid TouSeason at index ${s}: must be an object.`);
-      }
-      if (typeof season.id !== 'string' || season.id.trim() === '') {
-        throw new Error(
-          `Invalid TouSeason at index ${s}: id must be a non-empty string.`
-        );
-      }
-      if (typeof season.name !== 'string' || season.name.trim() === '') {
-        throw new Error(
-          `Invalid TouSeason at index ${s}: name must be a non-empty string.`
-        );
-      }
-      if (!Array.isArray(season.months)) {
-        throw new Error(
-          `Invalid TouSeason "${season.id}": months must be an array.`
-        );
-      }
-      for (let mIdx = 0; mIdx < season.months.length; mIdx++) {
-        const m = season.months[mIdx];
-        if (!Number.isInteger(m) || m < 0 || m > 11) {
-          throw new Error(
-            `Invalid TouSeason "${season.id}": month at index ${mIdx} must be an integer between 0 and 11. Received: ${m}`
-          );
-        }
-      }
-      if (
-        !season.tierRates ||
-        typeof season.tierRates !== 'object' ||
-        Array.isArray(season.tierRates)
-      ) {
-        throw new Error(
-          `Invalid TouSeason "${season.id}": tierRates must be a non-array object.`
-        );
-      }
-      for (const [tierId, rates] of Object.entries(season.tierRates)) {
-        if (!rates || typeof rates !== 'object') {
-          throw new Error(
-            `Invalid seasonal tier rates for tier "${tierId}" in season "${season.id}": must be an object.`
-          );
-        }
-        if (typeof rates.buyRate !== 'number' || !Number.isFinite(rates.buyRate)) {
-          throw new Error(
-            `Invalid seasonal buyRate for tier "${tierId}" in season "${season.id}": must be a finite number. Received: ${rates.buyRate}`
-          );
-        }
-        if (typeof rates.sellRate !== 'number' || !Number.isFinite(rates.sellRate)) {
-          throw new Error(
-            `Invalid seasonal sellRate for tier "${tierId}" in season "${season.id}": must be a finite number. Received: ${rates.sellRate}`
-          );
-        }
-      }
     }
   }
 
-  // 6. Setup local month formatter
-  const localMonthFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timeZone.trim(),
-    month: 'numeric',
-  });
+  // 3. Authoritative tariff rate resolution via G3M reusable resolver
+  // (Validates timeZone, tiers, seasons, alignedTimestamps, and resolves buyRate/sellRate/localMonth/seasonName)
+  const resolvedRates = resolveTariffRates(
+    gridFlows,
+    alignedTimestamps,
+    timeZone,
+    tiers,
+    seasons
+  );
 
-  // 7. Interval accumulation variables
+  // 4. Interval accumulation variables
   let totalBaselineCost = 0;
   let totalGridImportForHomeCost = 0;
   let totalGridImportForBatteryCost = 0;
@@ -192,40 +99,23 @@ export function calculateTariffCosts(
 
   const resultIntervals: TariffCostInterval[] = new Array(length);
 
-  // 8. Interval-by-interval processing
+  // 5. Interval-by-interval energy accounting
   for (let i = 0; i < length; i++) {
     const gf = gridFlows[i];
     const inf = integratedIntervals[i];
     const at = alignedTimestamps[i];
+    const rr = resolvedRates[i];
 
-    if (!gf || typeof gf !== 'object') {
-      throw new Error(`Invalid gridFlow interval at index ${i}: must be an object.`);
-    }
     if (!inf || typeof inf !== 'object') {
       throw new Error(
         `Invalid integrated interval at index ${i}: must be an object.`
       );
     }
-    if (!at || typeof at !== 'object') {
-      throw new Error(
-        `Invalid alignedTimestamp interval at index ${i}: must be an object.`
-      );
-    }
 
     // Source index alignment
-    if (gf.sourceIndex !== i) {
-      throw new Error(
-        `Alignment error at index ${i}: gridFlows sourceIndex is ${gf.sourceIndex}, expected ${i}.`
-      );
-    }
     if (inf.sourceIndex !== i) {
       throw new Error(
         `Alignment error at index ${i}: integratedIntervals sourceIndex is ${inf.sourceIndex}, expected ${i}.`
-      );
-    }
-    if (at.sourceIndex !== i) {
-      throw new Error(
-        `Alignment error at index ${i}: alignedTimestamps sourceIndex is ${at.sourceIndex}, expected ${i}.`
       );
     }
 
@@ -246,52 +136,6 @@ export function calculateTariffCosts(
       throw new Error(
         `Source timestamp mismatch at index ${i}: gridFlows sourceTimestamp ("${gf.sourceTimestamp}") !== integratedIntervals sourceTimestamp ("${inf.sourceTimestamp}").`
       );
-    }
-
-    // Tier existence
-    const baseTier = tierMap.get(gf.tierId);
-    if (!baseTier) {
-      throw new Error(
-        `Unknown tier ID "${gf.tierId}" at index ${i}: not present in configured tiers.`
-      );
-    }
-
-    // Check instantUtc Date validity
-    if (!(at.instantUtc instanceof Date) || isNaN(at.instantUtc.getTime())) {
-      throw new Error(
-        `Invalid instantUtc at index ${i}: must be a valid Date object.`
-      );
-    }
-
-    // Resolve local calendar month using site timezone
-    const parts = localMonthFormatter.formatToParts(at.instantUtc);
-    const monthPart = parts.find((p) => p.type === 'month');
-    if (!monthPart) {
-      throw new Error(
-        `Failed to resolve local month for instantUtc at index ${i}.`
-      );
-    }
-    const localMonth = parseInt(monthPart.value, 10) - 1;
-    if (localMonth < 0 || localMonth > 11 || isNaN(localMonth)) {
-      throw new Error(
-        `Resolved invalid local month ${localMonth} at index ${i}.`
-      );
-    }
-
-    // Active season matching: first-matching season wins
-    const activeSeason = seasons?.find((s) => s.months.includes(localMonth));
-
-    let buyRate = baseTier.buyRate;
-    let sellRate = baseTier.sellRate;
-    let seasonName: string | undefined = undefined;
-
-    if (activeSeason) {
-      seasonName = activeSeason.name;
-      const seasonalOverride = activeSeason.tierRates[baseTier.id];
-      if (seasonalOverride !== undefined && seasonalOverride !== null) {
-        buyRate = seasonalOverride.buyRate;
-        sellRate = seasonalOverride.sellRate;
-      }
     }
 
     // Energy flows validation
@@ -342,6 +186,10 @@ export function calculateTariffCosts(
       );
     }
 
+    // Resolved rates from G3M utility
+    const buyRate = rr.buyRate;
+    const sellRate = rr.sellRate;
+
     // Cost equations
     const baselineCost = homeLoadKwh * buyRate;
 
@@ -368,11 +216,11 @@ export function calculateTariffCosts(
       sourceTimestamp: gf.sourceTimestamp,
       timestampUtc: gf.timestampUtc,
 
-      tierId: baseTier.id,
-      tierName: baseTier.name,
-      seasonName,
+      tierId: rr.tierId,
+      tierName: rr.tierName,
+      seasonName: rr.seasonName,
 
-      localMonth,
+      localMonth: rr.localMonth,
 
       buyRate,
       sellRate,

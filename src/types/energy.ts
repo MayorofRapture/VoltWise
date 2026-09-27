@@ -1061,6 +1061,25 @@ export interface GridBatteryExportResult {
   costBasisStateAfter: GridSocCostBasisState;
 }
 
+// ============================================================================
+// Reusable Tariff Rate Resolution Contracts (Milestone G3M)
+// ============================================================================
+
+export interface TariffRateReferenceInterval {
+  sourceIndex: number;
+  timestampUtc: string;
+  tierId: string;
+}
+
+export interface ResolvedTariffRateInterval
+  extends TariffRateReferenceInterval {
+  tierName: string;
+  localMonth: number;
+  seasonName?: string;
+  buyRate: number;
+  sellRate: number;
+}
+
 
 
 
