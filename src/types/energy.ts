@@ -909,6 +909,42 @@ export interface IntegratedBatteryFlowResult {
   totalRemainingSurplusSolarKwh: number;
 }
 
+// ============================================================================
+// Grid Boundary Flow Accounting Contracts (Milestone G3I)
+// ============================================================================
+
+export interface GridFlowInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+  tierId: string;
+
+  residualHomeLoadKwh: number;
+  gridBatteryChargeKwh: number;
+  remainingSurplusSolarKwh: number;
+
+  gridImportForHomeKwh: number;
+  gridImportForBatteryKwh: number;
+  totalGridImportKwh: number;
+
+  solarExportKwh: number;
+  curtailedSolarKwh: number;
+  totalGridExportKwh: number;
+}
+
+export interface GridFlowResult {
+  intervals: GridFlowInterval[];
+
+  totalGridImportForHomeKwh: number;
+  totalGridImportForBatteryKwh: number;
+  totalGridImportKwh: number;
+
+  totalSolarExportKwh: number;
+  totalCurtailedSolarKwh: number;
+  totalGridExportKwh: number;
+}
+
+
 
 
 
