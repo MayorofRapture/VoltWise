@@ -817,5 +817,27 @@ export interface BatteryDispatchPolicyInterval
   tierId: string;
 }
 
+// ============================================================================
+// Grid-to-Battery Charging Contracts (Milestone G3F)
+// ============================================================================
+
+export interface GridBatteryChargeResult {
+  requestedGridChargeAcKwh: number;
+
+  gridToBatteryAcKwh: number;
+  gridEnergyStoredKwh: number;
+  unfulfilledGridChargeRequestKwh: number;
+
+  batterySocBeforeKwh: number;
+  batterySocAfterKwh: number;
+
+  gridSocBeforeKwh: number;
+  gridSocAfterKwh: number;
+
+  stateBefore: BatterySocProvenanceState;
+  stateAfter: BatterySocProvenanceState;
+}
+
+
 
 
