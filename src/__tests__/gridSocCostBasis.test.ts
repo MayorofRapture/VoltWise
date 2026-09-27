@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { trackGridSocCostBasis } from '../utils/gridSocCostBasis';
+import {
+  trackGridSocCostBasis,
+  advanceGridSocCostBasis,
+} from '../utils/gridSocCostBasis';
 import { routeIntegratedBatteryFlow } from '../utils/integratedBatteryFlow';
 import { calculateGridFlows } from '../utils/gridFlowAccounting';
 import { calculateTariffCosts } from '../utils/tariffCostAccounting';
@@ -790,5 +793,390 @@ describe('Grid-Charged SOC Acquisition-Cost Basis (Milestone G3K)', () => {
     expect(g3kResult.finalState.totalAcquisitionCostUsd).toBe(0);
     expect(g3kResult.totalGridChargeAcquisitionCostUsd).toBeCloseTo(0.40, 8);
     expect(g3kResult.totalGridSocCostRemovedUsd).toBeCloseTo(0.40, 8);
+  });
+});
+
+describe('Single-Interval Grid-SOC Cost-Basis Transition (Milestone G3N)', () => {
+  const zeroState: GridSocCostBasisState = {
+    gridStoredEnergyKwh: 0,
+    totalAcquisitionCostUsd: 0,
+  };
+
+  it('1. returns exact zero state when idle with zero initial energy', () => {
+    const result = advanceGridSocCostBasis(zeroState, 0, 0, 0);
+
+    expect(result.stateBefore).toEqual({
+      gridStoredEnergyKwh: 0,
+      totalAcquisitionCostUsd: 0,
+    });
+    expect(result.gridEnergyStoredKwh).toBe(0);
+    expect(result.gridChargeAcquisitionCostUsd).toBe(0);
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(0);
+    expect(result.acquisitionCostBeforeDrainUsd).toBe(0);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBe(0);
+    expect(result.gridSocDrainedKwh).toBe(0);
+    expect(result.gridSocCostRemovedUsd).toBe(0);
+    expect(result.stateAfter).toEqual({
+      gridStoredEnergyKwh: 0,
+      totalAcquisitionCostUsd: 0,
+    });
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBe(0);
+  });
+
+  it('2. adds newly charged grid energy and establishes cost basis', () => {
+    // Charge 5 kWh DC stored with $1.00 AC acquisition cost
+    const result = advanceGridSocCostBasis(zeroState, 5, 1.0, 0);
+
+    expect(result.stateBefore).toEqual({
+      gridStoredEnergyKwh: 0,
+      totalAcquisitionCostUsd: 0,
+    });
+    expect(result.gridEnergyStoredKwh).toBe(5);
+    expect(result.gridChargeAcquisitionCostUsd).toBe(1.0);
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(5);
+    expect(result.acquisitionCostBeforeDrainUsd).toBe(1.0);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+      0.20,
+      8
+    );
+    expect(result.gridSocDrainedKwh).toBe(0);
+    expect(result.gridSocCostRemovedUsd).toBe(0);
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(5);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBe(1.0);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(0.20, 8);
+  });
+
+  it('3. updates weighted-average cost basis when charging with existing inventory', () => {
+    // Current inventory: 4 kWh at $0.80 ($0.20/kWh)
+    // New charge: 6 kWh with $1.80 AC cost ($0.30/kWh)
+    // Total before drain: 10 kWh, $2.60 => $0.26/kWh
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 4,
+      totalAcquisitionCostUsd: 0.8,
+    };
+
+    const result = advanceGridSocCostBasis(state, 6, 1.8, 0);
+
+    expect(result.stateBefore.gridStoredEnergyKwh).toBe(4);
+    expect(result.stateBefore.totalAcquisitionCostUsd).toBe(0.8);
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(10);
+    expect(result.acquisitionCostBeforeDrainUsd).toBeCloseTo(2.6, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+      0.26,
+      8
+    );
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(10);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(2.6, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(0.26, 8);
+  });
+
+  it('4. partial drain removes proportional cost and preserves average cost per kWh', () => {
+    // Start with 10 kWh at $3.00 ($0.30/kWh)
+    // No charge in this interval, drain 4 kWh
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 10,
+      totalAcquisitionCostUsd: 3.0,
+    };
+
+    const result = advanceGridSocCostBasis(state, 0, 0, 4);
+
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(10);
+    expect(result.acquisitionCostBeforeDrainUsd).toBe(3.0);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+      0.30,
+      8
+    );
+    expect(result.gridSocDrainedKwh).toBe(4);
+    expect(result.gridSocCostRemovedUsd).toBeCloseTo(1.20, 8);
+    expect(result.stateAfter.gridStoredEnergyKwh).toBeCloseTo(6, 8);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(1.80, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(0.30, 8);
+  });
+
+  it('5. full drain resets stateAfter and average cost to exact zero', () => {
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 8,
+      totalAcquisitionCostUsd: 2.4,
+    };
+
+    const result = advanceGridSocCostBasis(state, 0, 0, 8);
+
+    expect(result.gridSocDrainedKwh).toBe(8);
+    expect(result.gridSocCostRemovedUsd).toBeCloseTo(2.4, 8);
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(0);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBe(0);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBe(0);
+  });
+
+  it('6. near-full drain within zero threshold normalizes to exact zero', () => {
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 5,
+      totalAcquisitionCostUsd: 1.5,
+    };
+
+    // Drain 4.9999999999 kWh (residual < 1e-9)
+    const result = advanceGridSocCostBasis(state, 0, 0, 5 - 1e-10);
+
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(0);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBe(0);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBe(0);
+  });
+
+  it('7. handles simultaneous charge and drain in the same interval', () => {
+    // Current: 2 kWh at $0.40 ($0.20/kWh)
+    // Charge: 3 kWh with $1.20 cost ($0.40/kWh)
+    // Total before drain: 5 kWh at $1.60 ($0.32/kWh)
+    // Drain: 2 kWh => removed: 2 * 0.32 = 0.64
+    // After: 3 kWh at $0.96 ($0.32/kWh)
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 2,
+      totalAcquisitionCostUsd: 0.4,
+    };
+
+    const result = advanceGridSocCostBasis(state, 3, 1.2, 2);
+
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(5);
+    expect(result.acquisitionCostBeforeDrainUsd).toBeCloseTo(1.6, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+      0.32,
+      8
+    );
+    expect(result.gridSocCostRemovedUsd).toBeCloseTo(0.64, 8);
+    expect(result.stateAfter.gridStoredEnergyKwh).toBeCloseTo(3, 8);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(0.96, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(0.32, 8);
+  });
+
+  it('8. supports negative electricity pricing without artificial clamping', () => {
+    // Charge 4 kWh with -$0.20 acquisition cost (-$0.05/kWh)
+    const result = advanceGridSocCostBasis(zeroState, 4, -0.20, 0);
+
+    expect(result.gridStoredEnergyBeforeDrainKwh).toBe(4);
+    expect(result.acquisitionCostBeforeDrainUsd).toBeCloseTo(-0.20, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+      -0.05,
+      8
+    );
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(4);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(-0.20, 8);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(-0.05, 8);
+
+    // Now drain 2 kWh: should remove negative cost
+    const drainResult = advanceGridSocCostBasis(result.stateAfter, 0, 0, 2);
+    expect(drainResult.gridSocCostRemovedUsd).toBeCloseTo(-0.10, 8);
+    expect(drainResult.stateAfter.gridStoredEnergyKwh).toBe(2);
+    expect(drainResult.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(-0.10, 8);
+    expect(drainResult.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(
+      -0.05,
+      8
+    );
+  });
+
+  it('9. does not mutate currentState and returns new state objects', () => {
+    const state: GridSocCostBasisState = Object.freeze({
+      gridStoredEnergyKwh: 6,
+      totalAcquisitionCostUsd: 1.8,
+    });
+
+    const result = advanceGridSocCostBasis(state, 2, 0.8, 1);
+
+    expect(result.stateBefore).not.toBe(state);
+    expect(result.stateAfter).not.toBe(state);
+    expect(state.gridStoredEnergyKwh).toBe(6);
+    expect(state.totalAcquisitionCostUsd).toBe(1.8);
+  });
+
+  it('10. rejects invalid or inconsistent currentState', () => {
+    expect(() => advanceGridSocCostBasis(null as any, 0, 0, 0)).toThrow(
+      'currentState must be a valid object'
+    );
+    expect(() =>
+      advanceGridSocCostBasis(
+        { gridStoredEnergyKwh: -1, totalAcquisitionCostUsd: 0 },
+        0,
+        0,
+        0
+      )
+    ).toThrow('gridStoredEnergyKwh must be a finite non-negative number');
+    expect(() =>
+      advanceGridSocCostBasis(
+        { gridStoredEnergyKwh: NaN, totalAcquisitionCostUsd: 0 },
+        0,
+        0,
+        0
+      )
+    ).toThrow('gridStoredEnergyKwh must be a finite non-negative number');
+    expect(() =>
+      advanceGridSocCostBasis(
+        { gridStoredEnergyKwh: 5, totalAcquisitionCostUsd: Infinity },
+        0,
+        0,
+        0
+      )
+    ).toThrow('totalAcquisitionCostUsd must be a finite number');
+    // Inconsistent state: zero energy but non-zero cost
+    expect(() =>
+      advanceGridSocCostBasis(
+        { gridStoredEnergyKwh: 0, totalAcquisitionCostUsd: 10 },
+        0,
+        0,
+        0
+      )
+    ).toThrow(
+      'Inconsistent currentState: zero gridStoredEnergyKwh'
+    );
+  });
+
+  it('11. rejects invalid input parameter values', () => {
+    expect(() => advanceGridSocCostBasis(zeroState, -1, 0, 0)).toThrow(
+      'gridEnergyStoredKwh must be a finite non-negative number'
+    );
+    expect(() => advanceGridSocCostBasis(zeroState, NaN, 0, 0)).toThrow(
+      'gridEnergyStoredKwh must be a finite non-negative number'
+    );
+    expect(() => advanceGridSocCostBasis(zeroState, 0, NaN, 0)).toThrow(
+      'gridChargeAcquisitionCostUsd must be a finite number'
+    );
+    expect(() => advanceGridSocCostBasis(zeroState, 0, 0, -1)).toThrow(
+      'gridSocDrainedKwh must be a finite non-negative number'
+    );
+    expect(() => advanceGridSocCostBasis(zeroState, 0, 0, NaN)).toThrow(
+      'gridSocDrainedKwh must be a finite non-negative number'
+    );
+  });
+
+  it('12. rejects grid SOC drain exceeding available grid stored energy beyond tolerance', () => {
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 3,
+      totalAcquisitionCostUsd: 0.9,
+    };
+
+    // Available is 3 kWh. Drain 3.5 kWh should throw.
+    expect(() => advanceGridSocCostBasis(state, 0, 0, 3.5)).toThrow(
+      'exceeds available grid stored energy'
+    );
+  });
+
+  it('13. tolerates microscopic drain floating-point overshoot within EPSILON', () => {
+    const state: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 2,
+      totalAcquisitionCostUsd: 0.6,
+    };
+
+    // Drain slightly over by 1e-7 (< EPSILON 1e-6)
+    const result = advanceGridSocCostBasis(state, 0, 0, 2 + 1e-7);
+    expect(result.gridSocDrainedKwh).toBe(2 + 1e-7);
+    expect(result.stateAfter.gridStoredEnergyKwh).toBe(0);
+    expect(result.stateAfter.totalAcquisitionCostUsd).toBe(0);
+    expect(result.averageAcquisitionCostPerStoredKwhAfter).toBe(0);
+  });
+
+  it('14. demonstrates exact step-by-step equivalence between advanceGridSocCostBasis and trackGridSocCostBasis', () => {
+    // 3 interval sequence: charge, partial drain, recharge + drain
+    const pairs = [
+      createMockPair(0, '2025-06-15T00:00:00.000Z', {
+        stateBeforeGridKwh: 0,
+        stateAfterGridKwh: 4,
+        gridToBatteryAcKwh: 4.4,
+        gridEnergyStoredKwh: 4,
+        gridSocDrainedKwh: 0,
+        buyRate: 0.10,
+        gridImportForBatteryCost: 0.44,
+      }),
+      createMockPair(1, '2025-06-15T01:00:00.000Z', {
+        stateBeforeGridKwh: 4,
+        stateAfterGridKwh: 2,
+        gridToBatteryAcKwh: 0,
+        gridEnergyStoredKwh: 0,
+        gridSocDrainedKwh: 2,
+        buyRate: 0.20,
+        gridImportForBatteryCost: 0,
+      }),
+      createMockPair(2, '2025-06-15T02:00:00.000Z', {
+        stateBeforeGridKwh: 2,
+        stateAfterGridKwh: 3,
+        gridToBatteryAcKwh: 2.2,
+        gridEnergyStoredKwh: 2,
+        gridSocDrainedKwh: 1,
+        buyRate: 0.15,
+        gridImportForBatteryCost: 0.33,
+      }),
+    ];
+
+    const trackResult = trackGridSocCostBasis(
+      pairs.map((p) => p.integrated),
+      pairs.map((p) => p.tariff),
+      zeroState
+    );
+
+    // Now run iteratively using advanceGridSocCostBasis
+    let currentState = zeroState;
+    for (let i = 0; i < pairs.length; i++) {
+      const p = pairs[i];
+      const step = advanceGridSocCostBasis(
+        currentState,
+        p.integrated.gridEnergyStoredKwh,
+        p.tariff.gridImportForBatteryCost,
+        p.integrated.gridSocDrainedKwh
+      );
+
+      const trackInv = trackResult.intervals[i];
+      expect(step.stateBefore.gridStoredEnergyKwh).toBeCloseTo(
+        trackInv.gridStoredEnergyBeforeKwh,
+        8
+      );
+      expect(step.stateBefore.totalAcquisitionCostUsd).toBeCloseTo(
+        trackInv.acquisitionCostBeforeUsd,
+        8
+      );
+      expect(step.gridEnergyStoredKwh).toBeCloseTo(
+        trackInv.gridEnergyStoredKwh,
+        8
+      );
+      expect(step.gridChargeAcquisitionCostUsd).toBeCloseTo(
+        trackInv.gridChargeAcquisitionCostUsd,
+        8
+      );
+      expect(step.gridStoredEnergyBeforeDrainKwh).toBeCloseTo(
+        trackInv.gridStoredEnergyBeforeDrainKwh,
+        8
+      );
+      expect(step.acquisitionCostBeforeDrainUsd).toBeCloseTo(
+        trackInv.acquisitionCostBeforeDrainUsd,
+        8
+      );
+      expect(step.averageAcquisitionCostPerStoredKwhBeforeDrain).toBeCloseTo(
+        trackInv.averageAcquisitionCostPerStoredKwhBeforeDrain,
+        8
+      );
+      expect(step.gridSocDrainedKwh).toBeCloseTo(trackInv.gridSocDrainedKwh, 8);
+      expect(step.gridSocCostRemovedUsd).toBeCloseTo(
+        trackInv.gridSocCostRemovedUsd,
+        8
+      );
+      expect(step.stateAfter.gridStoredEnergyKwh).toBeCloseTo(
+        trackInv.gridStoredEnergyAfterKwh,
+        8
+      );
+      expect(step.stateAfter.totalAcquisitionCostUsd).toBeCloseTo(
+        trackInv.acquisitionCostAfterUsd,
+        8
+      );
+      expect(step.averageAcquisitionCostPerStoredKwhAfter).toBeCloseTo(
+        trackInv.averageAcquisitionCostPerStoredKwhAfter,
+        8
+      );
+
+      currentState = step.stateAfter;
+    }
+
+    expect(currentState.gridStoredEnergyKwh).toBeCloseTo(
+      trackResult.finalState.gridStoredEnergyKwh,
+      8
+    );
+    expect(currentState.totalAcquisitionCostUsd).toBeCloseTo(
+      trackResult.finalState.totalAcquisitionCostUsd,
+      8
+    );
   });
 });

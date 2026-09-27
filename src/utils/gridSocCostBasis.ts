@@ -1,9 +1,10 @@
 /**
- * Grid-Charged SOC Acquisition-Cost Basis Engine (Milestone G3K)
+ * Grid-Charged SOC Acquisition-Cost Basis Engine (Milestones G3K & G3N)
  *
  * Tracks the weighted-average acquisition cost of ONLY grid-charged energy
  * currently stored in the battery:
- *   - Inventory/cost-basis ledger for future battery-export economics.
+ *   - advanceGridSocCostBasis: Reusable pure single-interval state transition primitive (G3N).
+ *   - trackGridSocCostBasis: Array-level pipeline accounting and reconciliation engine (G3K).
  *   - Uses G3J's resolved tariff accounting (AC purchase cost of grid imports).
  *   - Accurately tracks weighted-average cost basis on charge additions.
  *   - Removes proportional acquisition cost on G3H grid-SOC provenance depletion.
@@ -11,7 +12,7 @@
  *   - Normalizes to exact zero upon full depletion.
  *   - Supports finite negative electricity prices without artificial clamping.
  *
- * Pure function: does not mutate inputs. Does not modify physical dispatch,
+ * Pure functions: do not mutate inputs. Do not modify physical dispatch,
  * G3J tariff costs, or long-term financial results.
  */
 
@@ -19,6 +20,7 @@ import {
   GridSocCostBasisInterval,
   GridSocCostBasisResult,
   GridSocCostBasisState,
+  GridSocCostBasisTransitionResult,
   IntegratedBatteryFlowInterval,
   TariffCostInterval,
 } from '../types/energy';
@@ -27,7 +29,160 @@ const EPSILON = 1e-6;
 const ZERO_THRESHOLD = 1e-9;
 
 /**
- * Tracks the weighted-average acquisition cost basis of grid-charged battery energy.
+ * Pure single-interval state transition primitive for grid-charged SOC cost basis.
+ *
+ * Adds newly charged grid energy and acquisition cost, computes weighted-average
+ * unit cost, subtracts drained grid SOC with proportional cost removal, and normalizes
+ * to exact zero upon full depletion.
+ *
+ * @param currentState Current grid SOC energy and acquisition cost state before transition
+ * @param gridEnergyStoredKwh DC energy stored into battery from grid in this interval (kWh)
+ * @param gridChargeAcquisitionCostUsd AC cost of electricity purchased from grid for charging ($)
+ * @param gridSocDrainedKwh Grid SOC drained from battery in this interval (kWh)
+ * @returns Transition result containing before-drain state, drained costs, and stateAfter
+ */
+export function advanceGridSocCostBasis(
+  currentState: GridSocCostBasisState,
+  gridEnergyStoredKwh: number,
+  gridChargeAcquisitionCostUsd: number,
+  gridSocDrainedKwh: number
+): GridSocCostBasisTransitionResult {
+  // 1. Validate currentState
+  if (!currentState || typeof currentState !== 'object') {
+    throw new Error('currentState must be a valid object.');
+  }
+
+  if (
+    typeof currentState.gridStoredEnergyKwh !== 'number' ||
+    !Number.isFinite(currentState.gridStoredEnergyKwh) ||
+    currentState.gridStoredEnergyKwh < 0
+  ) {
+    throw new Error(
+      `currentState.gridStoredEnergyKwh must be a finite non-negative number. Received: ${currentState?.gridStoredEnergyKwh}`
+    );
+  }
+
+  if (
+    typeof currentState.totalAcquisitionCostUsd !== 'number' ||
+    !Number.isFinite(currentState.totalAcquisitionCostUsd)
+  ) {
+    throw new Error(
+      `currentState.totalAcquisitionCostUsd must be a finite number. Received: ${currentState?.totalAcquisitionCostUsd}`
+    );
+  }
+
+  if (currentState.gridStoredEnergyKwh <= ZERO_THRESHOLD) {
+    if (Math.abs(currentState.totalAcquisitionCostUsd) > ZERO_THRESHOLD) {
+      throw new Error(
+        `Inconsistent currentState: zero gridStoredEnergyKwh (${currentState.gridStoredEnergyKwh}) must have zero acquisition cost basis, received ${currentState.totalAcquisitionCostUsd}.`
+      );
+    }
+  }
+
+  // 2. Validate input parameters
+  if (
+    typeof gridEnergyStoredKwh !== 'number' ||
+    !Number.isFinite(gridEnergyStoredKwh) ||
+    gridEnergyStoredKwh < 0
+  ) {
+    throw new Error(
+      `gridEnergyStoredKwh must be a finite non-negative number. Received: ${gridEnergyStoredKwh}`
+    );
+  }
+
+  if (
+    typeof gridChargeAcquisitionCostUsd !== 'number' ||
+    !Number.isFinite(gridChargeAcquisitionCostUsd)
+  ) {
+    throw new Error(
+      `gridChargeAcquisitionCostUsd must be a finite number. Received: ${gridChargeAcquisitionCostUsd}`
+    );
+  }
+
+  if (
+    typeof gridSocDrainedKwh !== 'number' ||
+    !Number.isFinite(gridSocDrainedKwh) ||
+    gridSocDrainedKwh < 0
+  ) {
+    throw new Error(
+      `gridSocDrainedKwh must be a finite non-negative number. Received: ${gridSocDrainedKwh}`
+    );
+  }
+
+  // Effective initial state
+  const effectiveStoredEnergyBefore =
+    currentState.gridStoredEnergyKwh <= ZERO_THRESHOLD
+      ? 0
+      : currentState.gridStoredEnergyKwh;
+  const effectiveCostBefore =
+    currentState.gridStoredEnergyKwh <= ZERO_THRESHOLD
+      ? 0
+      : currentState.totalAcquisitionCostUsd;
+
+  // 3. Add newly charged grid energy before drain
+  const gridStoredEnergyBeforeDrainKwh =
+    effectiveStoredEnergyBefore + gridEnergyStoredKwh;
+  const acquisitionCostBeforeDrainUsd =
+    effectiveCostBefore + gridChargeAcquisitionCostUsd;
+
+  const averageAcquisitionCostPerStoredKwhBeforeDrain =
+    gridStoredEnergyBeforeDrainKwh > ZERO_THRESHOLD
+      ? acquisitionCostBeforeDrainUsd / gridStoredEnergyBeforeDrainKwh
+      : 0;
+
+  // 4. Reject drain exceeding available energy beyond tolerance
+  if (gridSocDrainedKwh > gridStoredEnergyBeforeDrainKwh + EPSILON) {
+    throw new Error(
+      `Grid SOC drain (${gridSocDrainedKwh}) exceeds available grid stored energy (${gridStoredEnergyBeforeDrainKwh}).`
+    );
+  }
+
+  const effectiveDrain = Math.min(
+    gridSocDrainedKwh,
+    gridStoredEnergyBeforeDrainKwh
+  );
+  const gridSocCostRemovedUsd =
+    effectiveDrain * averageAcquisitionCostPerStoredKwhBeforeDrain;
+
+  let gridStoredEnergyAfterKwh =
+    gridStoredEnergyBeforeDrainKwh - effectiveDrain;
+  let acquisitionCostAfterUsd =
+    acquisitionCostBeforeDrainUsd - gridSocCostRemovedUsd;
+
+  // Normalize exact zero if remaining energy is effectively zero
+  if (gridStoredEnergyAfterKwh <= ZERO_THRESHOLD) {
+    gridStoredEnergyAfterKwh = 0;
+    acquisitionCostAfterUsd = 0;
+  }
+
+  const averageAcquisitionCostPerStoredKwhAfter =
+    gridStoredEnergyAfterKwh > ZERO_THRESHOLD
+      ? acquisitionCostAfterUsd / gridStoredEnergyAfterKwh
+      : 0;
+
+  return {
+    stateBefore: {
+      gridStoredEnergyKwh: effectiveStoredEnergyBefore,
+      totalAcquisitionCostUsd: effectiveCostBefore,
+    },
+    gridEnergyStoredKwh,
+    gridChargeAcquisitionCostUsd,
+    gridStoredEnergyBeforeDrainKwh,
+    acquisitionCostBeforeDrainUsd,
+    averageAcquisitionCostPerStoredKwhBeforeDrain,
+    gridSocDrainedKwh,
+    gridSocCostRemovedUsd,
+    stateAfter: {
+      gridStoredEnergyKwh: gridStoredEnergyAfterKwh,
+      totalAcquisitionCostUsd: acquisitionCostAfterUsd,
+    },
+    averageAcquisitionCostPerStoredKwhAfter,
+  };
+}
+
+/**
+ * Tracks the weighted-average acquisition cost basis of grid-charged battery energy across an interval series.
+ * Delegates interval inventory math to the advanceGridSocCostBasis primitive.
  *
  * @param integratedIntervals Integrated battery flow intervals with provenance state (from G3H)
  * @param tariffIntervals Tariff-accounted cost intervals (from G3J)
@@ -178,9 +333,6 @@ export function trackGridSocCostBasis(
       );
     }
 
-    const gridStoredEnergyBeforeKwh = currentGridEnergy;
-    const acquisitionCostBeforeUsd = currentAcquisitionCost;
-
     const gridEnergyStoredKwh = inf.gridEnergyStoredKwh;
     if (
       typeof gridEnergyStoredKwh !== 'number' ||
@@ -192,7 +344,6 @@ export function trackGridSocCostBasis(
       );
     }
 
-    // Grid-charge acquisition cost is the AC purchase cost resolved by G3J
     const gridChargeAcquisitionCostUsd = tf.gridImportForBatteryCost;
     if (
       typeof gridChargeAcquisitionCostUsd !== 'number' ||
@@ -203,18 +354,6 @@ export function trackGridSocCostBasis(
       );
     }
 
-    // Inventory addition before drain
-    const gridStoredEnergyBeforeDrainKwh =
-      gridStoredEnergyBeforeKwh + Math.max(0, gridEnergyStoredKwh);
-    const acquisitionCostBeforeDrainUsd =
-      acquisitionCostBeforeUsd + gridChargeAcquisitionCostUsd;
-
-    const averageAcquisitionCostPerStoredKwhBeforeDrain =
-      gridStoredEnergyBeforeDrainKwh > ZERO_THRESHOLD
-        ? acquisitionCostBeforeDrainUsd / gridStoredEnergyBeforeDrainKwh
-        : 0;
-
-    // G3H grid provenance drain
     const gridSocDrainedKwh = inf.gridSocDrainedKwh;
     if (
       typeof gridSocDrainedKwh !== 'number' ||
@@ -226,62 +365,50 @@ export function trackGridSocCostBasis(
       );
     }
 
-    if (gridSocDrainedKwh > gridStoredEnergyBeforeDrainKwh + EPSILON) {
-      throw new Error(
-        `Grid SOC drain exceeds available grid stored energy at index ${i}: drained ${gridSocDrainedKwh} > available ${gridStoredEnergyBeforeDrainKwh}.`
-      );
-    }
-
-    const effectiveDrain = Math.max(0, gridSocDrainedKwh);
-    const gridSocCostRemovedUsd =
-      effectiveDrain * averageAcquisitionCostPerStoredKwhBeforeDrain;
-
-    let gridStoredEnergyAfterKwh =
-      gridStoredEnergyBeforeDrainKwh - effectiveDrain;
-    let acquisitionCostAfterUsd =
-      acquisitionCostBeforeDrainUsd - gridSocCostRemovedUsd;
-
-    // Normalize exact zero if remaining energy is effectively zero
-    if (gridStoredEnergyAfterKwh <= ZERO_THRESHOLD) {
-      gridStoredEnergyAfterKwh = 0;
-      acquisitionCostAfterUsd = 0;
-    }
-
-    const averageAcquisitionCostPerStoredKwhAfter =
-      gridStoredEnergyAfterKwh > ZERO_THRESHOLD
-        ? acquisitionCostAfterUsd / gridStoredEnergyAfterKwh
-        : 0;
+    // Authoritative transition calculation via G3N single-interval primitive
+    const transition = advanceGridSocCostBasis(
+      {
+        gridStoredEnergyKwh: currentGridEnergy,
+        totalAcquisitionCostUsd: currentAcquisitionCost,
+      },
+      Math.max(0, gridEnergyStoredKwh),
+      gridChargeAcquisitionCostUsd,
+      Math.max(0, gridSocDrainedKwh)
+    );
 
     // Ledger alignment with G3H stateAfter
     if (
-      Math.abs(gridStoredEnergyAfterKwh - inf.stateAfter.gridChargedSocKwh) >
-      EPSILON
+      Math.abs(
+        transition.stateAfter.gridStoredEnergyKwh -
+          inf.stateAfter.gridChargedSocKwh
+      ) > EPSILON
     ) {
       throw new Error(
-        `Physical state-after mismatch at index ${i}: ledger gridStoredEnergyAfterKwh (${gridStoredEnergyAfterKwh}) !== integrated stateAfter.gridChargedSocKwh (${inf.stateAfter.gridChargedSocKwh}).`
+        `Physical state-after mismatch at index ${i}: ledger gridStoredEnergyAfterKwh (${transition.stateAfter.gridStoredEnergyKwh}) !== integrated stateAfter.gridChargedSocKwh (${inf.stateAfter.gridChargedSocKwh}).`
       );
     }
 
     // Physical reconciliation check
     const expectedAfter =
-      gridStoredEnergyBeforeKwh +
-      Math.max(0, gridEnergyStoredKwh) -
-      effectiveDrain;
+      transition.stateBefore.gridStoredEnergyKwh +
+      transition.gridEnergyStoredKwh -
+      transition.gridSocDrainedKwh;
     if (
-      Math.abs(expectedAfter - gridStoredEnergyAfterKwh) > EPSILON &&
-      gridStoredEnergyAfterKwh !== 0
+      Math.abs(expectedAfter - transition.stateAfter.gridStoredEnergyKwh) >
+        EPSILON &&
+      transition.stateAfter.gridStoredEnergyKwh !== 0
     ) {
       throw new Error(
-        `Physical reconciliation failed at index ${i}: before (${gridStoredEnergyBeforeKwh}) + stored (${gridEnergyStoredKwh}) - drained (${effectiveDrain}) !== after (${gridStoredEnergyAfterKwh}).`
+        `Physical reconciliation failed at index ${i}: before (${transition.stateBefore.gridStoredEnergyKwh}) + stored (${transition.gridEnergyStoredKwh}) - drained (${transition.gridSocDrainedKwh}) !== after (${transition.stateAfter.gridStoredEnergyKwh}).`
       );
     }
 
     // Advance current ledger state
-    currentGridEnergy = gridStoredEnergyAfterKwh;
-    currentAcquisitionCost = acquisitionCostAfterUsd;
+    currentGridEnergy = transition.stateAfter.gridStoredEnergyKwh;
+    currentAcquisitionCost = transition.stateAfter.totalAcquisitionCostUsd;
 
-    totalGridChargeAcquisitionCostUsd += gridChargeAcquisitionCostUsd;
-    totalGridSocCostRemovedUsd += gridSocCostRemovedUsd;
+    totalGridChargeAcquisitionCostUsd += transition.gridChargeAcquisitionCostUsd;
+    totalGridSocCostRemovedUsd += transition.gridSocCostRemovedUsd;
 
     resultIntervals[i] = {
       sourceIndex: i,
@@ -289,22 +416,24 @@ export function trackGridSocCostBasis(
       timestampUtc: inf.timestampUtc,
       tierId: inf.tierId,
 
-      gridStoredEnergyBeforeKwh,
-      acquisitionCostBeforeUsd,
+      gridStoredEnergyBeforeKwh: transition.stateBefore.gridStoredEnergyKwh,
+      acquisitionCostBeforeUsd: transition.stateBefore.totalAcquisitionCostUsd,
 
-      gridEnergyStoredKwh: Math.max(0, gridEnergyStoredKwh),
-      gridChargeAcquisitionCostUsd,
+      gridEnergyStoredKwh: transition.gridEnergyStoredKwh,
+      gridChargeAcquisitionCostUsd: transition.gridChargeAcquisitionCostUsd,
 
-      gridStoredEnergyBeforeDrainKwh,
-      acquisitionCostBeforeDrainUsd,
-      averageAcquisitionCostPerStoredKwhBeforeDrain,
+      gridStoredEnergyBeforeDrainKwh: transition.gridStoredEnergyBeforeDrainKwh,
+      acquisitionCostBeforeDrainUsd: transition.acquisitionCostBeforeDrainUsd,
+      averageAcquisitionCostPerStoredKwhBeforeDrain:
+        transition.averageAcquisitionCostPerStoredKwhBeforeDrain,
 
-      gridSocDrainedKwh: effectiveDrain,
-      gridSocCostRemovedUsd,
+      gridSocDrainedKwh: transition.gridSocDrainedKwh,
+      gridSocCostRemovedUsd: transition.gridSocCostRemovedUsd,
 
-      gridStoredEnergyAfterKwh,
-      acquisitionCostAfterUsd,
-      averageAcquisitionCostPerStoredKwhAfter,
+      gridStoredEnergyAfterKwh: transition.stateAfter.gridStoredEnergyKwh,
+      acquisitionCostAfterUsd: transition.stateAfter.totalAcquisitionCostUsd,
+      averageAcquisitionCostPerStoredKwhAfter:
+        transition.averageAcquisitionCostPerStoredKwhAfter,
     };
   }
 
