@@ -238,8 +238,8 @@ export function exportGridChargedBatteryEnergy(
       costBasisState.totalAcquisitionCostUsd / costBasisState.gridStoredEnergyKwh;
     effectiveDeliveryCostPerAcKwh =
       averageAcquisitionCostPerStoredKwh / etaDischarge;
-    // Strict greater-than: equal price is not profitable (accounting for IEEE-754 precision)
-    exportEconomic = sellRate - effectiveDeliveryCostPerAcKwh > ZERO_THRESHOLD;
+    // Strict greater-than: equal price is not profitable
+    exportEconomic = sellRate > effectiveDeliveryCostPerAcKwh;
   }
 
   // 8. Eligibility evaluation

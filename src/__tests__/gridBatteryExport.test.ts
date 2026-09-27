@@ -112,16 +112,16 @@ describe('Grid-Charged Battery Export Primitive (Milestone G3L)', () => {
   it('3. produces zero export when sell rate exactly equals delivery cost (strict inequality)', () => {
     const batteryState: BatterySocProvenanceState = {
       ...zeroBatteryState,
-      gridChargedSocKwh: 3,
+      gridChargedSocKwh: 2,
     };
     const costBasis: GridSocCostBasisState = {
-      gridStoredEnergyKwh: 3,
-      totalAcquisitionCostUsd: 0.60, // $0.20/kWh
+      gridStoredEnergyKwh: 2,
+      totalAcquisitionCostUsd: 0.50, // exactly $0.25/kWh
     };
 
     const result = exportGridChargedBatteryEnergy(
       true,
-      0.20, // sellRate exactly equals $0.20/kWh
+      0.25, // sellRate exactly equals $0.25/kWh (effectiveDeliveryCostPerAcKwh)
       0,
       1.0,
       defaultProfile,
@@ -130,9 +130,54 @@ describe('Grid-Charged Battery Export Primitive (Milestone G3L)', () => {
     );
 
     expect(result.exportAllowed).toBe(true);
+    expect(result.effectiveDeliveryCostPerAcKwh).toBe(0.25);
+    expect(result.sellRate === result.effectiveDeliveryCostPerAcKwh).toBe(true);
     expect(result.exportEconomic).toBe(false);
     expect(result.batteryExportAcKwh).toBe(0);
     expect(result.gridSocDrainedForExportKwh).toBe(0);
+  });
+
+  // 3b. micro-margins below 1e-9 tolerance are profitable under strict numerical ordering
+  it('3b. confirms strict inequality with no epsilon deadband: micro-margin (+1e-10) is profitable, (-1e-10) is not', () => {
+    const batteryState: BatterySocProvenanceState = {
+      ...zeroBatteryState,
+      gridChargedSocKwh: 2,
+    };
+    const costBasis: GridSocCostBasisState = {
+      gridStoredEnergyKwh: 2,
+      totalAcquisitionCostUsd: 0.50, // exactly $0.25/kWh
+    };
+
+    const deliveryCost = 0.25;
+
+    // Positive micro-margin below old 1e-9 tolerance (+1e-10)
+    const resultProfitable = exportGridChargedBatteryEnergy(
+      true,
+      deliveryCost + 1e-10,
+      0,
+      1.0,
+      defaultProfile,
+      batteryState,
+      costBasis
+    );
+
+    expect(resultProfitable.exportEconomic).toBe(true);
+    expect(resultProfitable.batteryExportAcKwh).toBe(2);
+    expect(resultProfitable.exportGrossMarginUsd).toBeGreaterThan(0);
+
+    // Negative micro-margin (-1e-10)
+    const resultUnprofitable = exportGridChargedBatteryEnergy(
+      true,
+      deliveryCost - 1e-10,
+      0,
+      1.0,
+      defaultProfile,
+      batteryState,
+      costBasis
+    );
+
+    expect(resultUnprofitable.exportEconomic).toBe(false);
+    expect(resultUnprofitable.batteryExportAcKwh).toBe(0);
   });
 
   // 4. profile.allowGridExport=false -> zero export
