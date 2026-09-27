@@ -152,6 +152,72 @@ export function calculatePanelIncidenceCosine(
   return Math.max(0, cosIncidence);
 }
 
+export interface SolarPvOutput {
+  rawDcPowerKw: number;
+  dcPowerAfterLossesKw: number;
+  unclippedAcPowerKw: number;
+  acPowerKw: number;
+  dcEnergyKwh: number;
+  acEnergyKwh: number;
+  clippedEnergyKwh: number;
+}
+
+/**
+ * Calculates raw DC power, post-loss DC power, inverter clipping, and interval energy
+ * from plane-of-array (POA) irradiance.
+ */
+export function calculatePvOutputFromPoa(
+  poaIrradianceKwPerM2: number,
+  intervalHours: number,
+  asset: SolarGenerationAsset
+): SolarPvOutput {
+  if (intervalHours <= 0 || !Number.isFinite(intervalHours)) {
+    throw new Error(`Invalid intervalHours: ${intervalHours}. Must be greater than 0.`);
+  }
+
+  if (!asset.enabled) {
+    return {
+      rawDcPowerKw: 0,
+      dcPowerAfterLossesKw: 0,
+      unclippedAcPowerKw: 0,
+      acPowerKw: 0,
+      dcEnergyKwh: 0,
+      acEnergyKwh: 0,
+      clippedEnergyKwh: 0,
+    };
+  }
+
+  const rawDcPowerKw = Math.max(0, asset.dcCapacityKw * Math.max(0, poaIrradianceKwPerM2));
+
+  const systemLoss = Math.max(0, Math.min(100, asset.systemLossPercent));
+  const shadingLoss = Math.max(0, Math.min(100, asset.shadingLossPercent));
+
+  const dcPowerAfterLossesKw = Math.max(
+    0,
+    rawDcPowerKw * (1 - systemLoss / 100) * (1 - shadingLoss / 100)
+  );
+
+  const inverterEff = Math.max(0, Math.min(100, asset.inverterEfficiencyPercent));
+  const unclippedAcPowerKw = Math.max(0, dcPowerAfterLossesKw * (inverterEff / 100));
+
+  const acPowerKw = Math.min(unclippedAcPowerKw, Math.max(0, asset.inverterAcCapacityKw));
+  const clippedPowerKw = Math.max(0, unclippedAcPowerKw - acPowerKw);
+
+  const dcEnergyKwh = dcPowerAfterLossesKw * intervalHours;
+  const acEnergyKwh = acPowerKw * intervalHours;
+  const clippedEnergyKwh = clippedPowerKw * intervalHours;
+
+  return {
+    rawDcPowerKw,
+    dcPowerAfterLossesKw,
+    unclippedAcPowerKw,
+    acPowerKw,
+    dcEnergyKwh,
+    acEnergyKwh,
+    clippedEnergyKwh,
+  };
+}
+
 /**
  * Calculates clear-sky solar irradiance, DC power after losses, and AC power/energy for an interval.
  *
@@ -212,25 +278,7 @@ export function calculateClearSkySolarInterval(
     planeOfArrayIrradianceKwPerM2 = Math.max(0, poaBeam + poaDiffuse);
   }
 
-  const rawDcPowerKw = Math.max(0, asset.dcCapacityKw * planeOfArrayIrradianceKwPerM2);
-
-  const systemLoss = Math.max(0, Math.min(100, asset.systemLossPercent));
-  const shadingLoss = Math.max(0, Math.min(100, asset.shadingLossPercent));
-
-  const dcPowerAfterLossesKw = Math.max(
-    0,
-    rawDcPowerKw * (1 - systemLoss / 100) * (1 - shadingLoss / 100)
-  );
-
-  const inverterEff = Math.max(0, Math.min(100, asset.inverterEfficiencyPercent));
-  const unclippedAcPowerKw = Math.max(0, dcPowerAfterLossesKw * (inverterEff / 100));
-
-  const acPowerKw = Math.min(unclippedAcPowerKw, Math.max(0, asset.inverterAcCapacityKw));
-  const clippedPowerKw = Math.max(0, unclippedAcPowerKw - acPowerKw);
-
-  const dcEnergyKwh = dcPowerAfterLossesKw * intervalHours;
-  const acEnergyKwh = acPowerKw * intervalHours;
-  const clippedEnergyKwh = clippedPowerKw * intervalHours;
+  const pvOutput = calculatePvOutputFromPoa(planeOfArrayIrradianceKwPerM2, intervalHours, asset);
 
   return {
     timestampUtc: instantUtc.toISOString(),
@@ -238,12 +286,6 @@ export function calculateClearSkySolarInterval(
     clearSkyGhiKwPerM2,
     clearSkyDniKwPerM2,
     planeOfArrayIrradianceKwPerM2,
-    rawDcPowerKw,
-    dcPowerAfterLossesKw,
-    unclippedAcPowerKw,
-    acPowerKw,
-    dcEnergyKwh,
-    acEnergyKwh,
-    clippedEnergyKwh,
+    ...pvOutput,
   };
 }

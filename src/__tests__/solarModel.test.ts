@@ -307,4 +307,24 @@ describe('G2A Milestone — Solar Geometry & Clear-Sky Physics Model', () => {
     expect(JSON.stringify(site)).toBe(siteSnapshot);
     expect(JSON.stringify(baseAsset)).toBe(assetSnapshot);
   });
+
+  // --------------------------------------------------------------------------
+  // Southern Hemisphere regression
+  // --------------------------------------------------------------------------
+  it('gives higher incidence for north-facing panel than south-facing panel in southern hemisphere', () => {
+    const southernSite: GenerationSite = {
+      latitude: -35,
+      longitude: 0,
+      timeZone: '',
+      elevationM: 0,
+    };
+    const midday = new Date('2026-03-20T12:07:00Z');
+    const pos = calculateSolarPosition(midday, southernSite);
+
+    const northIncidence = calculatePanelIncidenceCosine(pos, 30, 0);   // North
+    const southIncidence = calculatePanelIncidenceCosine(pos, 30, 180); // South
+
+    expect(northIncidence).toBeGreaterThan(southIncidence);
+    expect(northIncidence).toBeGreaterThan(0.7);
+  });
 });

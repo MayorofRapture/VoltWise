@@ -551,3 +551,53 @@ export interface SolarIntervalGenerationResult {
   clippedEnergyKwh: number;
 }
 
+// ============================================================================
+// Solar Profile & Resource Modeling Types (Milestone G2B)
+// ============================================================================
+
+export interface MonthlyPeakSunHourSolarInterval {
+  timestampUtc: string;
+
+  localDate: string;
+  monthIndex: number;
+
+  targetPeakSunHoursPerDay: number;
+  resourceScaleFactor: number;
+
+  position: SolarPosition;
+
+  clearSkyGhiKwPerM2: number;
+  clearSkyDniKwPerM2: number;
+  clearSkyPoaKwPerM2: number;
+
+  modeledGhiKwPerM2: number;
+  modeledDniKwPerM2: number;
+  modeledPoaKwPerM2: number;
+
+  rawDcPowerKw: number;
+  dcPowerAfterLossesKw: number;
+  unclippedAcPowerKw: number;
+  acPowerKw: number;
+
+  dcEnergyKwh: number;
+  acEnergyKwh: number;
+  clippedEnergyKwh: number;
+}
+
+export interface SolarMonthlyGenerationSummary {
+  monthIndex: number;
+  intervalCount: number;
+  dcEnergyKwh: number;
+  acEnergyKwh: number;
+  clippedEnergyKwh: number;
+}
+
+export interface SolarGenerationProfileSummary {
+  intervalCount: number;
+  totalDcEnergyKwh: number;
+  totalAcEnergyKwh: number;
+  totalClippedEnergyKwh: number;
+
+  monthly: SolarMonthlyGenerationSummary[];
+}
+
