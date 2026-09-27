@@ -996,6 +996,49 @@ export interface TariffCostResult {
   netSavings: number;
 }
 
+// ============================================================================
+// Grid-Charged SOC Acquisition-Cost Basis Contracts (Milestone G3K)
+// ============================================================================
+
+export interface GridSocCostBasisState {
+  gridStoredEnergyKwh: number;
+  totalAcquisitionCostUsd: number;
+}
+
+export interface GridSocCostBasisInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+  tierId: string;
+
+  gridStoredEnergyBeforeKwh: number;
+  acquisitionCostBeforeUsd: number;
+
+  gridEnergyStoredKwh: number;
+  gridChargeAcquisitionCostUsd: number;
+
+  gridStoredEnergyBeforeDrainKwh: number;
+  acquisitionCostBeforeDrainUsd: number;
+  averageAcquisitionCostPerStoredKwhBeforeDrain: number;
+
+  gridSocDrainedKwh: number;
+  gridSocCostRemovedUsd: number;
+
+  gridStoredEnergyAfterKwh: number;
+  acquisitionCostAfterUsd: number;
+  averageAcquisitionCostPerStoredKwhAfter: number;
+}
+
+export interface GridSocCostBasisResult {
+  intervals: GridSocCostBasisInterval[];
+
+  initialState: GridSocCostBasisState;
+  finalState: GridSocCostBasisState;
+
+  totalGridChargeAcquisitionCostUsd: number;
+  totalGridSocCostRemovedUsd: number;
+}
+
 
 
 
