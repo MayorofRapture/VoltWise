@@ -1097,6 +1097,58 @@ export interface ResolvedTariffRateInterval
   sellRate: number;
 }
 
+// ============================================================================
+// Chronological Grid-SOC Battery Export Integration Contracts (Milestone G3O)
+// ============================================================================
+
+export interface ExportAwareBatteryFlowInterval {
+  sourceIndex: number;
+  sourceTimestamp: string;
+  timestampUtc: string;
+  tierId: string;
+
+  buyRate: number;
+  sellRate: number;
+
+  preExportFlow: IntegratedBatteryFlowInterval;
+  integratedBatteryFlow?: IntegratedBatteryFlowInterval;
+
+  gridChargeBranchSelected: boolean;
+  gridChargeAcquisitionCostUsd: number;
+  costBasisAfterHomeDispatch: GridSocCostBasisState;
+  allowBatteryExportInInterval: boolean;
+
+  exportResult: GridBatteryExportResult;
+  gridBatteryExport?: GridBatteryExportResult;
+
+  batteryStateAfterExport: BatterySocProvenanceState;
+  costBasisStateAfterExport: GridSocCostBasisState;
+}
+
+export interface ExportAwareBatteryFlowResult {
+  intervals: ExportAwareBatteryFlowInterval[];
+
+  initialBatteryState: BatterySocProvenanceState;
+  finalBatteryState: BatterySocProvenanceState;
+  initialCostBasisState: GridSocCostBasisState;
+  finalCostBasisState: GridSocCostBasisState;
+
+  // Compatibility aliases
+  initialState?: BatterySocProvenanceState;
+  finalState?: BatterySocProvenanceState;
+
+  totalBatteryExportAcKwh: number;
+  totalExportRevenueUsd: number;
+  totalExportGrossMarginUsd: number;
+  totalGridSocCostRemovedForExportUsd: number;
+
+  batteryExportAcKwh: number;
+  exportRevenueUsd: number;
+  exportGrossMarginUsd: number;
+  gridSocCostRemovedForExportUsd: number;
+}
+
+
 
 
 
