@@ -1039,6 +1039,28 @@ export interface GridSocCostBasisResult {
   totalGridSocCostRemovedUsd: number;
 }
 
+// ============================================================================
+// Grid-Charged Battery Export Primitive Contracts (Milestone G3L)
+// ============================================================================
+
+export interface GridBatteryExportResult {
+  exportAllowed: boolean;
+  exportEconomic: boolean;
+  sellRate: number;
+  averageAcquisitionCostPerStoredKwh: number;
+  effectiveDeliveryCostPerAcKwh: number;
+  remainingDischargeCapacityAcKwh: number;
+  batteryExportAcKwh: number;
+  gridSocDrainedForExportKwh: number;
+  gridSocCostRemovedForExportUsd: number;
+  exportRevenueUsd: number;
+  exportGrossMarginUsd: number;
+  batteryStateBefore: BatterySocProvenanceState;
+  batteryStateAfter: BatterySocProvenanceState;
+  costBasisStateBefore: GridSocCostBasisState;
+  costBasisStateAfter: GridSocCostBasisState;
+}
+
 
 
 
