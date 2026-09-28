@@ -80,11 +80,15 @@ function createAssetId(type: 'solar' | 'wind' | 'generator'): string {
 interface PowerGenerationTabProps {
   generationConfig: GenerationConfig;
   setGenerationConfig: React.Dispatch<React.SetStateAction<GenerationConfig>>;
+  allowSolarExport: boolean;
+  setAllowSolarExport: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
   generationConfig,
   setGenerationConfig,
+  allowSolarExport,
+  setAllowSolarExport,
 }) => {
   const [selectedAssetId, setSelectedAssetId] = useState<string>(
     generationConfig.assets[0]?.id || ''
@@ -180,23 +184,22 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      {/* Informational Callout: G1 Milestone Boundary */}
-      <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-4 sm:p-5 flex items-start gap-3 sm:gap-4 shadow-sm">
-        <div className="p-2 rounded-lg bg-sky-500/10 border border-sky-500/20 text-sky-400 shrink-0">
-          <ShieldAlert className="h-5 w-5" />
+      {/* Informational Callout: Active Solar Simulation */}
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 sm:p-5 flex items-start gap-3 sm:gap-4 shadow-sm">
+        <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+          <Activity className="h-5 w-5" />
         </div>
-        <div className="flex-1 text-xs text-sky-200/90 leading-relaxed">
+        <div className="flex-1 text-xs text-emerald-200/90 leading-relaxed">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-semibold text-sky-100 text-sm">
-              Milestone G1: Power Generation Domain Contracts & Configuration
+            <span className="font-semibold text-emerald-100 text-sm">
+              Active Solar Modeling & Dispatch Simulation
             </span>
-            <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
-              Contract Phase
+            <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              Active Simulation
             </span>
           </div>
           <p>
-            Configure your on-site photovoltaic solar arrays, micro wind turbines, and backup generators below.
-            In this initial milestone (G1), all configuration structures and hardware properties are persisted independently without modifying current battery dispatch calculations or financial outcomes. Active simulation modeling begins in subsequent milestones.
+            On-site photovoltaic solar generation is actively integrated into the dispatch and financial engine. Enabled solar arrays directly offset home load and charge battery storage. Surplus solar export to the utility grid is governed independently by the toggle below. Wind turbine and generator hardware configurations remain persisted contracts.
           </p>
         </div>
       </div>
@@ -302,6 +305,44 @@ export const PowerGenerationTab: React.FC<PowerGenerationTabProps> = ({
               placeholder="16"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 font-mono"
             />
+          </div>
+        </div>
+      </div>
+
+      {/* Grid Interconnection & Solar Export Policy */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+              <Sun className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Allow surplus solar export to grid
+                </h3>
+                <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-slate-800 text-slate-400 border border-slate-700">
+                  Grid Interconnection
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Controls export of unused solar generation to the utility grid and is independent of the battery&apos;s grid-export permission. When disabled, excess solar generation beyond load and battery charging capacity is curtailed.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+            <span className="text-xs font-mono text-slate-400">
+              {allowSolarExport ? 'Export Allowed' : 'Curtailed (Default)'}
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowSolarExport}
+                onChange={(e) => setAllowSolarExport(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
           </div>
         </div>
       </div>

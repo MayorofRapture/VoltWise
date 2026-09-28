@@ -28,14 +28,14 @@ import {
   ScheduleMatrix,
   calculate15YearFinancials,
   createDefaultScheduleMatrix,
-  runAnnualSimulation,
   getHeaderSavingsLabel,
   getHeaderPaybackText,
 } from './utils/simulationEngine';
+import { runUnifiedSimulation, UnifiedSimulationResult } from './utils/simulationRouter';
 import { DEFAULT_GENERATION_CONFIG, createDefaultGenerationConfig } from './utils/generationDefaults';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
-import { Zap, ChevronRight, Activity, ArrowRight, Bookmark } from 'lucide-react';
+import { Zap, ChevronRight, Activity, ArrowRight, Bookmark, AlertTriangle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'data' | 'profiles' | 'generation' | 'financials' | 'results'>('results');
@@ -50,8 +50,10 @@ export default function App() {
   const [profiles, setProfiles] = useState<BatteryProfile[]>(DEFAULT_BATTERY_PROFILES);
   const [activeProfileId, setActiveProfileId] = useState<string>('powerwall-3');
 
-  // Power Generation Assets & Site Config (Milestone G1)
+  // Power Generation Assets & Site Config (Milestone G1/G3S)
   const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(createDefaultGenerationConfig);
+  // Solar surplus export permission (Milestone G3S: independent from battery.allowGridExport)
+  const [allowSolarExport, setAllowSolarExport] = useState<boolean>(false);
 
   // Macro Financials
   const [financials, setFinancials] = useState<MacroFinancials>(DEFAULT_MACRO_FINANCIALS);
@@ -99,28 +101,68 @@ export default function App() {
     setProfiles(DEFAULT_BATTERY_PROFILES);
     setActiveProfileId('powerwall-3');
     setGenerationConfig(createDefaultGenerationConfig());
+    setAllowSolarExport(false);
     setFinancials(DEFAULT_MACRO_FINANCIALS);
     setActiveTab('data');
   };
 
-  // 1. Always compute interval simulation summaries for all profiles (works for full or partial datasets)
-  const allSimulationSummaries = useMemo<Record<string, AnnualSimulationSummary>>(() => {
+  // 1. Unified interval simulation batch for all profiles
+  // Directly routes to legacy engine if no generation assets are enabled (exact parity).
+  // Routes to generation-aware simulation when generation assets are enabled.
+  // Catches invalid/incomplete generation configuration errors without crashing React render.
+  const { unifiedResults, simulationError } = useMemo(() => {
     if (!csvResult || !csvResult.isValid || csvResult.data.length === 0) {
-      return {};
+      return {
+        unifiedResults: {} as Record<string, UnifiedSimulationResult>,
+        simulationError: null as string | null,
+      };
     }
+
+    try {
+      const results: Record<string, UnifiedSimulationResult> = {};
+      for (const profile of profiles) {
+        results[profile.id] = runUnifiedSimulation({
+          dataPoints: csvResult.data,
+          intervalHours: csvResult.intervalHours,
+          tiers,
+          scheduleMatrix,
+          batteryProfile: profile,
+          seasons: activeTouProfile?.seasons,
+          generationConfig,
+          allowSolarExport,
+        });
+      }
+      return { unifiedResults: results, simulationError: null };
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+          ? err
+          : 'Simulation error encountered with current generation configuration.';
+      return {
+        unifiedResults: {} as Record<string, UnifiedSimulationResult>,
+        simulationError: message,
+      };
+    }
+  }, [
+    csvResult,
+    tiers,
+    scheduleMatrix,
+    profiles,
+    activeTouProfile,
+    generationConfig,
+    allowSolarExport,
+  ]);
+
+  // Derive existing AnnualSimulationSummary map from unified results
+  const allSimulationSummaries = useMemo<Record<string, AnnualSimulationSummary>>(() => {
     const summaries: Record<string, AnnualSimulationSummary> = {};
-    profiles.forEach((profile) => {
-      summaries[profile.id] = runAnnualSimulation(
-        csvResult.data,
-        csvResult.intervalHours,
-        tiers,
-        scheduleMatrix,
-        profile,
-        activeTouProfile?.seasons
-      );
-    });
+    for (const [id, result] of Object.entries(unifiedResults)) {
+      summaries[id] = result.annualSummary;
+    }
     return summaries;
-  }, [csvResult, tiers, scheduleMatrix, profiles, activeTouProfile]);
+  }, [unifiedResults]);
 
   const isSuitableForAnnual = Boolean(
     csvResult?.completeness ? csvResult.completeness.isSuitableForAnnualProjection : true
@@ -128,13 +170,20 @@ export default function App() {
 
   // 2. Compute 25-year financial projections ONLY if dataset is suitable for annual projection
   const allAnalyses = useMemo<ProfileFinancialAnalysis[]>(() => {
-    if (!isSuitableForAnnual || !csvResult || !csvResult.isValid || csvResult.data.length === 0) {
+    if (
+      !isSuitableForAnnual ||
+      !csvResult ||
+      !csvResult.isValid ||
+      csvResult.data.length === 0 ||
+      Object.keys(allSimulationSummaries).length === 0
+    ) {
       return [];
     }
 
-    return profiles.map((profile) => {
+    return profiles.flatMap((profile) => {
       const annualSummary = allSimulationSummaries[profile.id];
-      return calculate15YearFinancials(profile, annualSummary, financials);
+      if (!annualSummary) return [];
+      return [calculate15YearFinancials(profile, annualSummary, financials)];
     });
   }, [isSuitableForAnnual, csvResult, profiles, allSimulationSummaries, financials]);
 
@@ -224,6 +273,31 @@ export default function App() {
           ) : null}
         </div>
 
+        {/* Simulation Configuration Error Callout */}
+        {simulationError && (
+          <div className="mb-6 rounded-xl border border-rose-500/40 bg-rose-950/20 p-4 sm:p-5 flex items-start gap-3 sm:gap-4 shadow-sm animate-fadeIn">
+            <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 shrink-0">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div className="flex-1 text-xs text-rose-200/90 leading-relaxed">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-semibold text-rose-100 text-sm">
+                  Simulation Configuration Error
+                </span>
+                <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  Calculation Paused
+                </span>
+              </div>
+              <p className="font-mono text-rose-300 bg-rose-950/40 px-2.5 py-1.5 rounded border border-rose-900/30 my-1.5">
+                {simulationError}
+              </p>
+              <p className="text-slate-400 text-[11px]">
+                Please review your generation asset configurations and site parameters in the On-Site Power Generation tab. Once valid, simulation calculations will resume automatically.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Tab 1: Data & Rates */}
         {activeTab === 'data' && (
           <DataAndRatesTab
@@ -257,6 +331,8 @@ export default function App() {
           <PowerGenerationTab
             generationConfig={generationConfig}
             setGenerationConfig={setGenerationConfig}
+            allowSolarExport={allowSolarExport}
+            setAllowSolarExport={setAllowSolarExport}
           />
         )}
 
