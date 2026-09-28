@@ -929,6 +929,7 @@ export interface GridFlowInterval {
 
   solarExportKwh: number;
   curtailedSolarKwh: number;
+  batteryExportKwh: number;
   totalGridExportKwh: number;
 }
 
@@ -941,6 +942,7 @@ export interface GridFlowResult {
 
   totalSolarExportKwh: number;
   totalCurtailedSolarKwh: number;
+  totalBatteryExportKwh: number;
   totalGridExportKwh: number;
 }
 
@@ -967,6 +969,9 @@ export interface TariffCostInterval {
   gridImportForHomeKwh: number;
   gridImportForBatteryKwh: number;
   totalGridImportKwh: number;
+
+  solarExportKwh: number;
+  batteryExportKwh: number;
   totalGridExportKwh: number;
 
   baselineCost: number;
@@ -975,6 +980,8 @@ export interface TariffCostInterval {
   gridImportForBatteryCost: number;
   totalGridImportCost: number;
 
+  solarExportCredit: number;
+  batteryExportCredit: number;
   gridExportCredit: number;
 
   simulatedCost: number;
@@ -990,7 +997,13 @@ export interface TariffCostResult {
   gridImportForBatteryCost: number;
   totalGridImportCost: number;
 
+  solarExportCredit: number;
+  batteryExportCredit: number;
   gridExportCredit: number;
+
+  totalSolarExportCredit?: number;
+  totalBatteryExportCredit?: number;
+  totalGridExportCredit?: number;
 
   simulatedCost: number;
   netSavings: number;

@@ -138,12 +138,17 @@ function createMockPair(
     totalGridImportKwh: homeLoadKwh + gridToBatteryAcKwh,
     totalGridExportKwh: 0,
 
+    solarExportKwh: 0,
+    batteryExportKwh: 0,
+
     baselineCost: homeLoadKwh * buyRate,
 
     gridImportForHomeCost: homeLoadKwh * buyRate,
     gridImportForBatteryCost,
     totalGridImportCost: homeLoadKwh * buyRate + gridImportForBatteryCost,
 
+    solarExportCredit: 0,
+    batteryExportCredit: 0,
     gridExportCredit: 0,
 
     simulatedCost: homeLoadKwh * buyRate + gridImportForBatteryCost,

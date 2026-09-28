@@ -534,6 +534,7 @@ describe('Reusable Tariff Rate Resolution Engine (Milestone G3M)', () => {
         totalGridImportKwh: 5,
         solarExportKwh: 0,
         curtailedSolarKwh: 0,
+        batteryExportKwh: 0,
         totalGridExportKwh: 0,
       },
       {
@@ -549,6 +550,7 @@ describe('Reusable Tariff Rate Resolution Engine (Milestone G3M)', () => {
         totalGridImportKwh: 0,
         solarExportKwh: 4,
         curtailedSolarKwh: 0,
+        batteryExportKwh: 0,
         totalGridExportKwh: 4,
       },
     ];

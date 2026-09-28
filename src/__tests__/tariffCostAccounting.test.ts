@@ -1,14 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTariffCosts } from '../utils/tariffCostAccounting';
-import { calculateGridFlows } from '../utils/gridFlowAccounting';
+import {
+  calculateTariffCosts,
+  calculateExportAwareTariffCosts,
+} from '../utils/tariffCostAccounting';
+import {
+  calculateGridFlows,
+  calculateExportAwareGridFlows,
+} from '../utils/gridFlowAccounting';
 import { routeIntegratedBatteryFlow } from '../utils/integratedBatteryFlow';
+import { routeExportAwareBatteryFlow } from '../utils/exportAwareBatteryFlow';
+import { resolveTariffRates } from '../utils/tariffRateResolver';
 import {
   BatteryDispatchPolicyInterval,
   BatteryProfile,
   BatterySocProvenanceState,
+  ExportAwareBatteryFlowInterval,
   GridFlowInterval,
   IntegratedBatteryFlowInterval,
   RateTier,
+  ResolvedTariffRateInterval,
   SolarLoadFlowInterval,
   TouSeason,
 } from '../types/energy';
@@ -108,6 +118,9 @@ function createMockGridFlow(
     gridImportForHomeKwh + gridImportForBatteryKwh;
   const totalGridExportKwh = overrides.totalGridExportKwh ?? 0;
 
+  const batteryExportKwh = overrides.batteryExportKwh ?? 0;
+  const solarExportKwh = overrides.solarExportKwh ?? totalGridExportKwh - batteryExportKwh;
+
   return {
     sourceIndex: index,
     sourceTimestamp,
@@ -122,8 +135,9 @@ function createMockGridFlow(
     gridImportForBatteryKwh,
     totalGridImportKwh,
 
-    solarExportKwh: totalGridExportKwh,
+    solarExportKwh,
     curtailedSolarKwh: 0,
+    batteryExportKwh,
     totalGridExportKwh,
   };
 }
@@ -999,5 +1013,506 @@ describe('Tariff Cost Accounting Engine (Milestone G3J)', () => {
     expect(g3jResult.baselineCost).toBeCloseTo(2.70, 8);
     expect(g3jResult.simulatedCost).toBeCloseTo(0.40, 8);
     expect(g3jResult.netSavings).toBeCloseTo(2.30, 8);
+  });
+
+  describe('G3P — Export-Aware Tariff Cost Accounting', () => {
+    function createMockExportAwareInterval(
+      index: number,
+      isoUtc: string,
+      options: {
+        sourceTimestamp?: string;
+        tierId?: string;
+        homeLoadKwh?: number;
+        buyRate?: number;
+        sellRate?: number;
+        batteryExportAcKwh?: number;
+        gridSocCostRemovedForExportUsd?: number;
+        exportGrossMarginUsd?: number;
+      } = {}
+    ): ExportAwareBatteryFlowInterval {
+      const sourceTimestamp =
+        options.sourceTimestamp ?? isoUtc.slice(0, 16).replace('T', ' ');
+      const tierId = options.tierId ?? 'standard';
+      const preExportFlow: IntegratedBatteryFlowInterval =
+        createMockIntegratedInterval(index, isoUtc, {
+          sourceTimestamp,
+          tierId,
+          homeLoadKwh: options.homeLoadKwh ?? 3,
+        });
+      const batteryExportAcKwh = options.batteryExportAcKwh ?? 0;
+      const buyRate = options.buyRate ?? 0.2;
+      const sellRate = options.sellRate ?? 0.1;
+
+      return {
+        sourceIndex: index,
+        sourceTimestamp,
+        timestampUtc: isoUtc,
+        tierId,
+        buyRate,
+        sellRate,
+        preExportFlow,
+        integratedBatteryFlow: preExportFlow,
+        gridChargeBranchSelected: false,
+        gridChargeAcquisitionCostUsd: 0,
+        costBasisAfterHomeDispatch: {
+          gridStoredEnergyKwh: 0,
+          totalAcquisitionCostUsd: 0,
+        },
+        allowBatteryExportInInterval: batteryExportAcKwh > 0,
+        exportResult: {
+          exportAllowed: batteryExportAcKwh > 0,
+          exportEconomic: batteryExportAcKwh > 0,
+          sellRate,
+          averageAcquisitionCostPerStoredKwh: 0.06,
+          effectiveDeliveryCostPerAcKwh: 0.06,
+          remainingDischargeCapacityAcKwh: 5 - batteryExportAcKwh,
+          batteryExportAcKwh,
+          gridSocDrainedForExportKwh: batteryExportAcKwh,
+          gridSocCostRemovedForExportUsd:
+            options.gridSocCostRemovedForExportUsd ?? batteryExportAcKwh * 0.06,
+          exportRevenueUsd: batteryExportAcKwh * sellRate,
+          exportGrossMarginUsd:
+            options.exportGrossMarginUsd ?? batteryExportAcKwh * 0.04,
+          batteryStateBefore: {
+            syntheticSocKwh: 0,
+            gridChargedSocKwh: batteryExportAcKwh,
+            renewableChargedSocKwh: 0,
+            generatorChargedSocKwh: 0,
+          },
+          batteryStateAfter: {
+            syntheticSocKwh: 0,
+            gridChargedSocKwh: 0,
+            renewableChargedSocKwh: 0,
+            generatorChargedSocKwh: 0,
+          },
+          costBasisStateBefore: {
+            gridStoredEnergyKwh: batteryExportAcKwh,
+            totalAcquisitionCostUsd: batteryExportAcKwh * 0.06,
+          },
+          costBasisStateAfter: {
+            gridStoredEnergyKwh: 0,
+            totalAcquisitionCostUsd: 0,
+          },
+        },
+        batteryStateAfterExport: {
+          syntheticSocKwh: 0,
+          gridChargedSocKwh: 0,
+          renewableChargedSocKwh: 0,
+          generatorChargedSocKwh: 0,
+        },
+        costBasisStateAfterExport: {
+          gridStoredEnergyKwh: 0,
+          totalAcquisitionCostUsd: 0,
+        },
+      };
+    }
+
+    function createMockResolvedRate(
+      index: number,
+      isoUtc: string,
+      options: {
+        tierId?: string;
+        tierName?: string;
+        buyRate?: number;
+        sellRate?: number;
+        localMonth?: number;
+        seasonName?: string;
+      } = {}
+    ): ResolvedTariffRateInterval {
+      return {
+        sourceIndex: index,
+        timestampUtc: isoUtc,
+        tierId: options.tierId ?? 'standard',
+        tierName: options.tierName ?? 'Standard Rate',
+        buyRate: options.buyRate ?? 0.2,
+        sellRate: options.sellRate ?? 0.1,
+        localMonth: options.localMonth ?? 5,
+        seasonName: options.seasonName,
+      };
+    }
+
+    it('7. computes tariff solar export credit correctly', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z', {
+        gridImportForHomeKwh: 0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 4.0,
+        batteryExportKwh: 0,
+        totalGridExportKwh: 4.0,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: 0.2,
+        sellRate: 0.05,
+        batteryExportAcKwh: 0,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: 0.2,
+        sellRate: 0.05,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      expect(res.intervals[0].solarExportCredit).toBeCloseTo(4.0 * 0.05, 8);
+      expect(res.intervals[0].batteryExportCredit).toBe(0);
+      expect(res.solarExportCredit).toBeCloseTo(0.20, 8);
+      expect(res.batteryExportCredit).toBe(0);
+    });
+
+    it('8. computes tariff battery export credit correctly', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T18:00:00.000Z', {
+        gridImportForHomeKwh: 0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 0,
+        batteryExportKwh: 3.5,
+        totalGridExportKwh: 3.5,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T18:00:00.000Z', {
+        buyRate: 0.4,
+        sellRate: 0.25,
+        batteryExportAcKwh: 3.5,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T18:00:00.000Z', {
+        buyRate: 0.4,
+        sellRate: 0.25,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      expect(res.intervals[0].solarExportCredit).toBe(0);
+      expect(res.intervals[0].batteryExportCredit).toBeCloseTo(3.5 * 0.25, 8);
+      expect(res.solarExportCredit).toBe(0);
+      expect(res.batteryExportCredit).toBeCloseTo(3.5 * 0.25, 8);
+    });
+
+    it('9. computes combined grid export credit and reconciles with totalGridExportKwh * sellRate', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T14:00:00.000Z', {
+        gridImportForHomeKwh: 0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 2.5,
+        batteryExportKwh: 1.5,
+        totalGridExportKwh: 4.0,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T14:00:00.000Z', {
+        buyRate: 0.3,
+        sellRate: 0.12,
+        batteryExportAcKwh: 1.5,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T14:00:00.000Z', {
+        buyRate: 0.3,
+        sellRate: 0.12,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      const int0 = res.intervals[0];
+      expect(int0.solarExportCredit).toBeCloseTo(2.5 * 0.12, 8);
+      expect(int0.batteryExportCredit).toBeCloseTo(1.5 * 0.12, 8);
+      expect(int0.gridExportCredit).toBeCloseTo(int0.solarExportCredit + int0.batteryExportCredit, 8);
+      expect(int0.gridExportCredit).toBeCloseTo(4.0 * 0.12, 8);
+      expect(res.gridExportCredit).toBeCloseTo(0.48, 8);
+    });
+
+    it('10. simulatedCost includes battery-export credit exactly once', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T18:00:00.000Z', {
+        gridImportForHomeKwh: 4.0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 0,
+        batteryExportKwh: 2.0,
+        totalGridExportKwh: 2.0,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T18:00:00.000Z', {
+        homeLoadKwh: 4.0,
+        buyRate: 0.50,
+        sellRate: 0.30,
+        batteryExportAcKwh: 2.0,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T18:00:00.000Z', {
+        buyRate: 0.50,
+        sellRate: 0.30,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      const int0 = res.intervals[0];
+      // import cost: 4.0 * 0.50 = 2.00
+      // battery export credit: 2.0 * 0.30 = 0.60
+      // simulatedCost: 2.00 - 0.60 = 1.40
+      expect(int0.totalGridImportCost).toBeCloseTo(2.00, 8);
+      expect(int0.batteryExportCredit).toBeCloseTo(0.60, 8);
+      expect(int0.gridExportCredit).toBeCloseTo(0.60, 8);
+      expect(int0.simulatedCost).toBeCloseTo(1.40, 8);
+      expect(int0.netSavings).toBeCloseTo(2.00 - 1.40, 8); // 0.60
+    });
+
+    it('11. does NOT subtract G3L acquisition cost or gross margin again', () => {
+      // In G3L, battery export had cost basis = $0.20 and gross margin = $0.15 for $0.35 revenue.
+      // In tariff accounting, grid import was already billed during charging.
+      // Tariff accounting must calculate simulatedCost = importCost - exportRevenue ($0.35).
+      // It must NOT subtract cost basis ($0.20) or gross margin ($0.15) again.
+      const gf = createMockGridFlow(0, '2025-06-01T18:00:00.000Z', {
+        gridImportForHomeKwh: 0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 0,
+        batteryExportKwh: 1.0,
+        totalGridExportKwh: 1.0,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T18:00:00.000Z', {
+        homeLoadKwh: 0,
+        buyRate: 0.50,
+        sellRate: 0.35,
+        batteryExportAcKwh: 1.0,
+        gridSocCostRemovedForExportUsd: 0.20,
+        exportGrossMarginUsd: 0.15,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T18:00:00.000Z', {
+        buyRate: 0.50,
+        sellRate: 0.35,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      const int0 = res.intervals[0];
+      expect(int0.batteryExportCredit).toBeCloseTo(0.35, 8);
+      // simulatedCost is totalGridImportCost (0) - gridExportCredit (0.35) = -0.35
+      expect(int0.simulatedCost).toBeCloseTo(-0.35, 8);
+    });
+
+    it('12. negative sell rates remain mathematical and act as an export fee/charge', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z', {
+        gridImportForHomeKwh: 2.0,
+        gridImportForBatteryKwh: 0,
+        solarExportKwh: 1.0,
+        batteryExportKwh: 2.0,
+        totalGridExportKwh: 3.0,
+      });
+      const eai = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        homeLoadKwh: 2.0,
+        buyRate: 0.20,
+        sellRate: -0.04,
+        batteryExportAcKwh: 2.0,
+      });
+      const rr = createMockResolvedRate(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: 0.20,
+        sellRate: -0.04,
+      });
+
+      const res = calculateExportAwareTariffCosts([gf], [eai], [rr]);
+      const int0 = res.intervals[0];
+      // import cost: 2.0 * 0.20 = 0.40
+      // solar credit: 1.0 * (-0.04) = -0.04
+      // battery credit: 2.0 * (-0.04) = -0.08
+      // total credit: -0.12
+      // simulated cost: 0.40 - (-0.12) = 0.52
+      expect(int0.solarExportCredit).toBeCloseTo(-0.04, 8);
+      expect(int0.batteryExportCredit).toBeCloseTo(-0.08, 8);
+      expect(int0.gridExportCredit).toBeCloseTo(-0.12, 8);
+      expect(int0.simulatedCost).toBeCloseTo(0.52, 8);
+    });
+
+    it('13. integrates directly in pipeline: G3O -> export-aware G3I -> export-aware G3J', () => {
+      const profile: BatteryProfile = {
+        id: 'test-battery',
+        name: 'Test Battery',
+        model: 'VoltCell-10',
+        totalCapacityKwh: 10,
+        usableDodPercent: 100,
+        maxContinuousChargeKw: 5,
+        maxContinuousOutputKw: 5,
+        roundTripEfficiencyPercent: 100,
+        ratedCycleLife: 4000,
+        installedCost: 8000,
+        strategy: 'arbitrage',
+        chargeTiers: ['off-peak'],
+        dischargeTiers: ['on-peak'],
+        allowGridExport: true,
+      };
+
+      const intervals: SolarLoadFlowInterval[] = [
+        {
+          sourceIndex: 0,
+          sourceTimestamp: '2025-06-01 02:00',
+          timestampUtc: '2025-06-01T02:00:00.000Z',
+          homeLoadKwh: 0,
+          solarGenerationKwh: 0,
+          solarDirectToLoadKwh: 0,
+          residualHomeLoadKwh: 0,
+          surplusSolarKwh: 0,
+        },
+        {
+          sourceIndex: 1,
+          sourceTimestamp: '2025-06-01 18:00',
+          timestampUtc: '2025-06-01T18:00:00.000Z',
+          homeLoadKwh: 0,
+          solarGenerationKwh: 0,
+          solarDirectToLoadKwh: 0,
+          residualHomeLoadKwh: 0,
+          surplusSolarKwh: 0,
+        },
+      ];
+
+      const policy: BatteryDispatchPolicyInterval[] = [
+        {
+          sourceIndex: 0,
+          timestampUtc: '2025-06-01T02:00:00.000Z',
+          tierId: 'off-peak',
+          allowGridChargeFromGrid: true,
+          allowBatteryDischargeToLoad: false,
+          dayOfWeek: 0,
+          hour: 2,
+        },
+        {
+          sourceIndex: 1,
+          timestampUtc: '2025-06-01T18:00:00.000Z',
+          tierId: 'on-peak',
+          allowGridChargeFromGrid: false,
+          allowBatteryDischargeToLoad: true,
+          dayOfWeek: 0,
+          hour: 18,
+        },
+      ];
+
+      const tiers: RateTier[] = [
+        { id: 'off-peak', name: 'Off Peak', buyRate: 0.10, sellRate: 0.03, color: '#3b82f6' },
+        { id: 'on-peak', name: 'On Peak', buyRate: 0.50, sellRate: 0.40, color: '#ef4444' },
+      ];
+
+      const alignedTimestamps: AlignedLoadTimestamp[] = [
+        createMockAlignedTimestamp(0, '2025-06-01T02:00:00.000Z'),
+        createMockAlignedTimestamp(1, '2025-06-01T18:00:00.000Z'),
+      ];
+
+      const resolvedRates = resolveTariffRates(
+        policy,
+        alignedTimestamps,
+        'UTC',
+        tiers
+      );
+
+      // 1. G3O Chronological Export-Aware Dispatch
+      const g3oResult = routeExportAwareBatteryFlow(
+        intervals,
+        policy,
+        resolvedRates,
+        1.0,
+        profile,
+        {
+          syntheticSocKwh: 0,
+          gridChargedSocKwh: 0,
+          renewableChargedSocKwh: 0,
+          generatorChargedSocKwh: 0,
+        },
+        {
+          gridStoredEnergyKwh: 0,
+          totalAcquisitionCostUsd: 0,
+        }
+      );
+
+      expect(g3oResult.intervals[0].preExportFlow.gridToBatteryAcKwh).toBe(5);
+      expect(g3oResult.intervals[1].exportResult.batteryExportAcKwh).toBe(5);
+
+      // 2. G3I Export-Aware Grid Flow Accounting
+      const g3iResult = calculateExportAwareGridFlows(g3oResult.intervals, true);
+      expect(g3iResult.intervals[0].gridImportForBatteryKwh).toBe(5);
+      expect(g3iResult.intervals[1].batteryExportKwh).toBe(5);
+      expect(g3iResult.totalBatteryExportKwh).toBe(5);
+
+      // 3. G3J Export-Aware Tariff Accounting (direct pipeline with no caller-side remapping)
+      const g3jResult = calculateExportAwareTariffCosts(
+        g3iResult.intervals,
+        g3oResult.intervals,
+        resolvedRates
+      );
+
+      expect(g3jResult.intervals).toHaveLength(2);
+
+      // Interval 0 (charging 5 kWh at $0.10):
+      // Grid import cost = 5 * 0.10 = $0.50
+      // Export credit = 0
+      // Simulated cost = $0.50
+      expect(g3jResult.intervals[0].gridImportForBatteryCost).toBeCloseTo(0.50, 8);
+      expect(g3jResult.intervals[0].simulatedCost).toBeCloseTo(0.50, 8);
+
+      // Interval 1 (exporting 5 kWh at $0.40):
+      // Grid import cost = 0
+      // Battery export credit = 5 * 0.40 = $2.00
+      // Simulated cost = -$2.00
+      expect(g3jResult.intervals[1].batteryExportCredit).toBeCloseTo(2.00, 8);
+      expect(g3jResult.intervals[1].simulatedCost).toBeCloseTo(-2.00, 8);
+
+      // Totals
+      expect(g3jResult.totalGridImportCost).toBeCloseTo(0.50, 8);
+      expect(g3jResult.batteryExportCredit).toBeCloseTo(2.00, 8);
+      expect(g3jResult.simulatedCost).toBeCloseTo(-1.50, 8);
+      // Net savings vs zero baseline home load = 0 - (-1.50) = 1.50 (arbitrage profit!)
+      expect(g3jResult.netSavings).toBeCloseTo(1.50, 8);
+    });
+
+    it('14. rejects resolved-rate mismatch between exportAwareIntervals and resolvedRates', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z');
+      const eai = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: 0.20,
+        sellRate: 0.10,
+      });
+      const mismatchedRate = createMockResolvedRate(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: 0.35, // 0.35 !== 0.20
+        sellRate: 0.10,
+      });
+
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eai], [mismatchedRate])
+      ).toThrow(/Resolved-rate mismatch/i);
+    });
+
+    it('15. rejects index, timestamp, or tier mismatches', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z');
+      const eai = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z');
+      const rr = createMockResolvedRate(0, '2025-06-01T12:00:00.000Z');
+
+      // Empty arrays
+      expect(() => calculateExportAwareTariffCosts([], [eai], [rr])).toThrow(/non-empty array/i);
+      expect(() => calculateExportAwareTariffCosts([gf], [], [rr])).toThrow(/non-empty array/i);
+      expect(() => calculateExportAwareTariffCosts([gf], [eai], [])).toThrow(/non-empty array/i);
+
+      // Length mismatch
+      expect(() =>
+        calculateExportAwareTariffCosts([gf, gf], [eai], [rr])
+      ).toThrow(/Array length mismatch/i);
+
+      // Source index mismatch
+      const badIndexGf = createMockGridFlow(99, '2025-06-01T12:00:00.000Z');
+      expect(() =>
+        calculateExportAwareTariffCosts([badIndexGf], [eai], [rr])
+      ).toThrow(/Alignment error/i);
+
+      // Timestamp mismatch
+      const badTsGf = createMockGridFlow(0, '2099-01-01T00:00:00.000Z');
+      expect(() =>
+        calculateExportAwareTariffCosts([badTsGf], [eai], [rr])
+      ).toThrow(/Timestamp mismatch/i);
+
+      // Tier mismatch
+      const badTierGf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z', {
+        tierId: 'other-tier',
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([badTierGf], [eai], [rr])
+      ).toThrow(/Tier mismatch/i);
+    });
+
+    it('16. preserves input immutability', () => {
+      const gf = Object.freeze(
+        createMockGridFlow(0, '2025-06-01T12:00:00.000Z', {
+          solarExportKwh: 2,
+          batteryExportKwh: 3,
+          totalGridExportKwh: 5,
+        })
+      );
+      const eai = Object.freeze(
+        createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+          batteryExportAcKwh: 3,
+        })
+      );
+      const rr = Object.freeze(
+        createMockResolvedRate(0, '2025-06-01T12:00:00.000Z')
+      );
+
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eai], [rr])
+      ).not.toThrow();
+    });
   });
 });
