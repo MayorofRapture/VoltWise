@@ -1210,3 +1210,47 @@ export interface GenerationProjectCostSummary {
   byType: GenerationTypeCostBreakdown[] & GenerationTypeCostMap;
   solarMetadata: SolarAssetMetadata[];
 }
+
+// ============================================================================
+// Multi-Year Generation-Aware Operational Projection Contracts (Milestone G4B)
+// ============================================================================
+
+export interface SolarAssetProjectionState {
+  assetId: string;
+  capacityRetentionFactor: number;
+  effectiveDcCapacityKw: number;
+}
+
+export interface GenerationOperationalYear {
+  year: number;
+
+  baselineElectricityCostUsd: number;
+  simulatedElectricityCostUsd: number;
+  electricitySavingsUsd: number;
+
+  solarGeneratedKwh: number;
+  solarDirectToLoadKwh: number;
+  solarToBatteryKwh: number;
+  solarExportKwh: number;
+  solarCurtailedKwh: number;
+
+  gridImportKwh: number;
+  gridExportKwh: number;
+  batteryExportKwh: number;
+
+  batteryDischargedKwh: number;
+  equivalentFullCycles: number;
+
+  batteryCapacityRetentionFactor: number;
+  batteryUsableCapacityKwh: number;
+
+  solarAssets: SolarAssetProjectionState[];
+}
+
+export interface GenerationOperationalProjection {
+  horizonYears: number;
+  years: GenerationOperationalYear[];
+}
+
+export type GenerationOperationalProjectionResult = GenerationOperationalYear[] &
+  GenerationOperationalProjection;
