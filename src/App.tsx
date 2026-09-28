@@ -19,6 +19,7 @@ import {
   TouProfile,
   AnnualSimulationSummary,
   GenerationConfig,
+  AnalysisState,
 } from './types/energy';
 import {
   DEFAULT_BATTERY_PROFILES,
@@ -33,6 +34,10 @@ import {
 } from './utils/simulationEngine';
 import { runUnifiedSimulation, UnifiedSimulationResult } from './utils/simulationRouter';
 import { DEFAULT_GENERATION_CONFIG, createDefaultGenerationConfig } from './utils/generationDefaults';
+import {
+  deriveAnalysisState,
+  shouldCalculateLegacyFinancials,
+} from './utils/generationFinancials';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
 import { Zap, ChevronRight, Activity, ArrowRight, Bookmark, AlertTriangle } from 'lucide-react';
@@ -169,6 +174,7 @@ export default function App() {
   );
 
   // 2. Compute 25-year financial projections ONLY if dataset is suitable for annual projection
+  // AND simulation mode is 'legacy' (G4A Safety Gate: generation-aware results do not enter legacy financials)
   const allAnalyses = useMemo<ProfileFinancialAnalysis[]>(() => {
     if (
       !isSuitableForAnnual ||
@@ -181,16 +187,28 @@ export default function App() {
     }
 
     return profiles.flatMap((profile) => {
+      const unifiedResult = unifiedResults[profile.id];
+      if (!unifiedResult || !shouldCalculateLegacyFinancials(isSuitableForAnnual, unifiedResult.mode)) {
+        return [];
+      }
       const annualSummary = allSimulationSummaries[profile.id];
       if (!annualSummary) return [];
       return [calculate15YearFinancials(profile, annualSummary, financials)];
     });
-  }, [isSuitableForAnnual, csvResult, profiles, allSimulationSummaries, financials]);
+  }, [isSuitableForAnnual, csvResult, profiles, unifiedResults, allSimulationSummaries, financials]);
 
-  // Active Profile Analysis (null for partial/unsuitable datasets)
+  // Active Profile Analysis (null for partial/unsuitable datasets and generation-aware mode)
   const activeAnalysis = useMemo<ProfileFinancialAnalysis | null>(() => {
     return allAnalyses.find((a) => a.profile.id === activeProfileId) || allAnalyses[0] || null;
   }, [allAnalyses, activeProfileId]);
+
+  const activeUnifiedResult = unifiedResults[activeProfileId];
+  const analysisState = useMemo<AnalysisState>(() => {
+    return deriveAnalysisState(
+      isSuitableForAnnual,
+      activeUnifiedResult?.mode
+    );
+  }, [isSuitableForAnnual, activeUnifiedResult]);
 
   const activeSimulationSummary = allSimulationSummaries[activeProfileId] || null;
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
@@ -223,7 +241,7 @@ export default function App() {
             </span>
           </div>
 
-          {activeAnalysis ? (
+          {analysisState === 'legacy-financial' && activeAnalysis ? (
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-slate-400">
               <span className="flex items-center gap-1">
                 <Bookmark className="h-3 w-3 text-emerald-400" />
@@ -264,11 +282,21 @@ export default function App() {
               </span>
               <span>·</span>
               <span>
-                {getHeaderSavingsLabel(false)}:{' '}
+                {getHeaderSavingsLabel(isSuitableForAnnual)}:{' '}
                 <strong className="text-emerald-400 font-mono">
-                  ${(activeSimulationSummary.periodSavings ?? activeSimulationSummary.year1Savings).toLocaleString()}
+                  {isSuitableForAnnual
+                    ? `$${activeSimulationSummary.year1Savings.toLocaleString()}/yr`
+                    : `$${(activeSimulationSummary.periodSavings ?? activeSimulationSummary.year1Savings).toLocaleString()}`}
                 </strong>
               </span>
+              {analysisState === 'generation-financial-pending' && (
+                <>
+                  <span>·</span>
+                  <span className="text-sky-400 font-mono text-[11px] bg-sky-950/60 border border-sky-500/30 px-2 py-0.5 rounded">
+                    Lifecycle Finance Pending
+                  </span>
+                </>
+              )}
             </div>
           ) : null}
         </div>
@@ -358,6 +386,7 @@ export default function App() {
             activeTouProfile={activeTouProfile}
             financials={financials}
             csvResult={csvResult}
+            analysisState={analysisState}
           />
         )}
 

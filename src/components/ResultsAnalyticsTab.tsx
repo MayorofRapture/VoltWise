@@ -40,6 +40,7 @@ import {
   AnnualSimulationSummary,
   YearProjection,
   IntervalSimulationResult,
+  AnalysisState,
 } from '../types/energy';
 import {
   buildExportLlmJson,
@@ -50,6 +51,7 @@ import {
   deriveHorizonFinancialSummary,
   derivePartialPeriodDisplayMetrics,
 } from '../utils/simulationEngine';
+import { deriveAnalysisState } from '../utils/generationFinancials';
 
 export interface ResultsAnalyticsTabProps {
   activeAnalysis: ProfileFinancialAnalysis | null;
@@ -62,6 +64,7 @@ export interface ResultsAnalyticsTabProps {
   activeTouProfile?: TouProfile;
   financials: MacroFinancials;
   csvResult?: CsvValidationResult | null;
+  analysisState?: AnalysisState;
 }
 
 interface ResultsAnalyticsContentProps {
@@ -74,6 +77,7 @@ interface ResultsAnalyticsContentProps {
   activeTouProfile?: TouProfile;
   financials: MacroFinancials;
   csvResult?: CsvValidationResult | null;
+  analysisState?: AnalysisState;
 }
 
 const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
@@ -86,12 +90,21 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   activeTouProfile,
   financials,
   csvResult,
+  analysisState,
 }) => {
   const completeness = csvResult?.completeness;
-  const isPartialPeriod = Boolean(
-    (completeness && !completeness.isSuitableForAnnualProjection) || !activeAnalysis
+  const isSuitableForAnnual = Boolean(
+    completeness ? completeness.isSuitableForAnnualProjection : true
   );
-  const hasFinancialAnalysis = !isPartialPeriod && activeAnalysis !== null;
+  const currentAnalysisState: AnalysisState =
+    analysisState ??
+    deriveAnalysisState(
+      isSuitableForAnnual,
+      activeAnalysis !== null ? 'legacy' : 'generation-aware'
+    );
+  const isPartialPeriod = currentAnalysisState === 'partial-period';
+  const isGenerationFinancialPending = currentAnalysisState === 'generation-financial-pending';
+  const hasFinancialAnalysis = currentAnalysisState === 'legacy-financial' && activeAnalysis !== null;
 
   // Analysis-backed variables with safe fallbacks
   const isFinanced = activeAnalysis ? activeAnalysis.isFinanced : Boolean(financials?.isFinanced);
@@ -304,7 +317,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Export CSV for the active horizon and view
   const handleExportProjectionsCsv = () => {
-    if (isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)) {
+    if (isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)) {
       return;
     }
 
@@ -346,7 +359,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
   // Export complete analysis structured for LLM analysis & reporting (.json)
   const handleExportLlmJson = () => {
-    if (isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)) {
+    if (isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)) {
       return;
     }
 
@@ -801,16 +814,18 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleExportLlmJson}
-            disabled={isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)}
+            disabled={isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border whitespace-nowrap shadow-sm ${
-              isPartialPeriod || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)
+              isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)
                 ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border-slate-800'
                 : hasExportedJson
                 ? 'bg-emerald-600 text-white border-emerald-400 shadow-emerald-900/50'
                 : 'text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/90 border-emerald-500/50 shadow-emerald-950 hover:border-emerald-400'
             }`}
             title={
-              isPartialPeriod || !activeAnalysis
+              isGenerationFinancialPending
+                ? 'Export disabled: Lifecycle financial analysis for generation-aware projects is pending'
+                : isPartialPeriod || !activeAnalysis
                 ? 'Export disabled for partial-period or incomplete datasets'
                 : 'Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting'
             }
@@ -827,14 +842,16 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
 
           <button
             onClick={handleExportProjectionsCsv}
-            disabled={isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)}
+            disabled={isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border rounded-lg transition-colors whitespace-nowrap ${
-              isPartialPeriod || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)
+              isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsCsv(activeAnalysis, csvResult)
                 ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border-slate-800'
                 : 'text-slate-300 bg-slate-900 hover:bg-slate-800 border-slate-700/80'
             }`}
             title={
-              isPartialPeriod || !activeAnalysis
+              isGenerationFinancialPending
+                ? 'Export disabled: Lifecycle financial analysis for generation-aware projects is pending'
+                : isPartialPeriod || !activeAnalysis
                 ? 'Export disabled for partial-period or incomplete datasets'
                 : 'Export Projections CSV'
             }
@@ -865,8 +882,28 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         </div>
       )}
 
+      {/* GENERATION LIFECYCLE FINANCIAL PENDING INFORMATIONAL BANNER */}
+      {isGenerationFinancialPending && (
+        <div className="rounded-xl border border-sky-500/40 bg-sky-950/20 p-4 text-xs space-y-2 shadow-sm">
+          <div className="flex items-center gap-2 font-bold text-sky-300 uppercase tracking-wider text-[11px]">
+            <Activity className="h-4 w-4 text-sky-400 shrink-0" />
+            <span>Generation-Aware Operational Simulation Active — Lifecycle Financial Analysis Pending</span>
+          </div>
+          <p className="text-slate-300 leading-relaxed">
+            Authoritative 8,760-hour generation and dispatch modeling is complete. Year-1 operational energy savings and interval dispatch metrics are fully calculated. Multi-year lifecycle financial modeling (payback, NPV, IRR, and multi-year cash flow projections) for generation projects will be available in an upcoming update.
+          </p>
+          <div className="flex flex-wrap gap-4 text-[11px] font-mono text-sky-300/90 pt-1 border-t border-sky-500/20">
+            <span>Operational Model: <strong>Generation-Aware (8,760h)</strong></span>
+            <span>Year-1 Net Savings: <strong>${annualSummary.year1Savings.toLocaleString()}/yr</strong></span>
+            <span>Grid Import: <strong>{annualSummary.annualGridImportKwh.toLocaleString()} kWh</strong></span>
+            <span>Grid Export: <strong>{annualSummary.annualGridExportKwh.toLocaleString()} kWh</strong></span>
+            <span className="text-sky-400 font-semibold">24h dispatch explorer and operational analytics are active below</span>
+          </div>
+        </div>
+      )}
+
       {/* TIME VALUE OF MONEY (TVM) WARNING CALLOUT (if nominal profit > 0 but NPV < 0) */}
-      {!isPartialPeriod && isNpvNegativeWithPositiveProfit && (
+      {hasFinancialAnalysis && isNpvNegativeWithPositiveProfit && (
         <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-xs space-y-1.5 shadow-sm">
           <div className="flex items-center gap-2 font-bold text-amber-400 uppercase tracking-wider text-[11px]">
             <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
@@ -906,6 +943,8 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             <span>
               {hasFinancialAnalysis && activeAnalysis
                 ? (activeAnalysis.isFinanced ? 'Upfront Down Payment' : 'Net Out-of-Pocket Cost')
+                : isGenerationFinancialPending
+                ? 'Configured Battery Installed Cost'
                 : 'Configured Installed Cost'}
             </span>
             <DollarSign className="h-4 w-4 text-emerald-400" />
@@ -924,6 +963,10 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                   {activeAnalysis.isFinanced ? 'Financed' : 'Cash'}
                 </span>
               </>
+            ) : isGenerationFinancialPending ? (
+              <span className="text-sky-400 font-medium">
+                Generation project lifecycle finance pending
+              </span>
             ) : (
               <span className="text-amber-400 font-medium">
                 Financial projection unavailable until annual data is provided
@@ -936,15 +979,17 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 relative overflow-hidden">
           <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-1">
             <span>
-              {!hasFinancialAnalysis || !activeAnalysis
+              {isPartialPeriod
                 ? 'Partial-Period Savings'
-                : activeAnalysis.isFinanced
+                : isGenerationFinancialPending
+                ? 'Year 1 Energy Savings'
+                : activeAnalysis?.isFinanced
                 ? 'Net Monthly Cash Flow'
                 : 'Year 1 Energy Savings'}
             </span>
             <Zap className="h-4 w-4 text-emerald-400" />
           </div>
-          {!hasFinancialAnalysis || !activeAnalysis ? (
+          {isPartialPeriod ? (
             <div>
               <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
                 ${partialMetrics.periodSavingsUsd.toLocaleString()}
@@ -958,7 +1003,19 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <span className="text-emerald-400 font-semibold">-{partialMetrics.savingsPercentage}% period cut</span>
               </div>
             </div>
-          ) : activeAnalysis.isFinanced ? (
+          ) : isGenerationFinancialPending ? (
+            <div>
+              <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
+                ${annualSummary.year1Savings.toLocaleString()}
+                <span className="text-xs text-slate-400 font-sans ml-1 font-normal">/year</span>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
+                <span className="text-sky-400 font-medium">Authoritative 8,760h operational model</span>
+                <span>·</span>
+                <span className="text-emerald-400 font-semibold">-{annualSummary.savingsPercentage}% bill cut</span>
+              </div>
+            </div>
+          ) : activeAnalysis?.isFinanced ? (
             <div>
               <div className={`text-2xl font-bold font-mono tabular-nums ${activeAnalysis.isCashFlowPositiveDay1 ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {activeAnalysis.netMonthlyCashFlow >= 0 ? `+$${activeAnalysis.netMonthlyCashFlow.toFixed(2)}` : `-$${Math.abs(activeAnalysis.netMonthlyCashFlow).toFixed(2)}`}
@@ -973,11 +1030,11 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           ) : (
             <div>
               <div className="text-2xl font-bold text-emerald-400 font-mono tabular-nums">
-                ${activeAnalysis.year1Savings.toLocaleString()}
+                ${activeAnalysis?.year1Savings.toLocaleString()}
                 <span className="text-xs text-slate-400 font-sans ml-1 font-normal">/year</span>
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-                <span>Monthly: +${activeAnalysis.monthlyElectricitySavingsYear1.toFixed(0)}/mo</span>
+                <span>Monthly: +${activeAnalysis?.monthlyElectricitySavingsYear1.toFixed(0)}/mo</span>
                 <span>·</span>
                 <span className="text-emerald-400 font-semibold">-{annualSummary.savingsPercentage}% bill cut</span>
               </div>
@@ -1014,10 +1071,14 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           ) : (
             <>
               <div className="text-2xl font-bold text-slate-400 font-mono tabular-nums">
-                Unavailable
+                {isGenerationFinancialPending ? 'Pending' : 'Unavailable'}
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-                <span className="text-amber-400 font-medium">Requires approximately one year of suitable data</span>
+                <span className={isGenerationFinancialPending ? 'text-sky-400 font-medium' : 'text-amber-400 font-medium'}>
+                  {isGenerationFinancialPending
+                    ? 'Generation lifecycle finance pending'
+                    : 'Requires approximately one year of suitable data'}
+                </span>
               </div>
             </>
           )}
@@ -1047,10 +1108,14 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           ) : (
             <>
               <div className="text-2xl font-bold text-slate-400 font-mono tabular-nums">
-                Unavailable
+                {isGenerationFinancialPending ? 'Pending' : 'Unavailable'}
               </div>
               <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
-                <span className="text-amber-400 font-medium">Requires approximately one year of suitable data</span>
+                <span className={isGenerationFinancialPending ? 'text-sky-400 font-medium' : 'text-amber-400 font-medium'}>
+                  {isGenerationFinancialPending
+                    ? 'Generation lifecycle finance pending'
+                    : 'Requires approximately one year of suitable data'}
+                </span>
               </div>
             </>
           )}
@@ -1198,6 +1263,83 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             </div>
           </div>
         </div>
+      ) : isGenerationFinancialPending ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Panel A: Operational Year 1 Energy Costs */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <DollarSign className="h-4 w-4 text-emerald-400" />
+                Year 1 Operational Energy Costs
+              </span>
+              <span className="text-[10px] font-mono text-sky-400">Full-Year 8,760h Simulation</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Simulated electricity spend and operational savings with on-site generation and battery dispatch:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Baseline Annual Cost:</span>
+                <span className="text-white font-bold">${annualSummary.baselineAnnualCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">With Generation & Battery:</span>
+                <span className="text-cyan-300 font-bold">${annualSummary.simulatedAnnualCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Year 1 Operational Savings:</span>
+                <span className="text-emerald-400 font-bold">+${annualSummary.year1Savings.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] pt-0.5">
+              <span className="text-slate-400">Net Electricity Bill Reduction:</span>
+              <span className="font-bold text-emerald-400 font-mono">-{annualSummary.savingsPercentage}% cut</span>
+            </div>
+          </div>
+
+          {/* Panel B: Battery & Generation Operation */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <BatteryCharging className="h-4 w-4 text-cyan-400" />
+                Battery & Generation Operation — Annual Model
+              </span>
+              <span className="text-[10px] font-mono text-cyan-300">8,760 Hours</span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Authoritative dispatch throughput, load offset, and grid interaction over Year 1:
+            </p>
+            <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Total Home Load:</span>
+                <span className="text-white font-bold">{annualSummary.totalHomeLoadKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Grid Import:</span>
+                <span className="text-slate-200 font-bold">{annualSummary.annualGridImportKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Grid Export:</span>
+                <span className="text-slate-200 font-bold">{annualSummary.annualGridExportKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Battery Discharged:</span>
+                <span className="text-cyan-300 font-bold">{annualSummary.annualBatteryDischargedKwh.toLocaleString()} kWh</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-800">
+                <span className="text-slate-400">Equivalent Cycles:</span>
+                <span className="text-emerald-400 font-bold">{annualSummary.equivalentFullCycles} cycles/yr</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Peak Demand:</span>
+                <span className="text-amber-300 font-bold">{annualSummary.maxPeakDemandKw} kW</span>
+              </div>
+            </div>
+            <span className="text-[10px] text-slate-400 block font-mono">
+              Operational results active · Multi-year degradation and lifecycle finance pending
+            </span>
+          </div>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Panel A: Observed Period Energy Costs */}
@@ -1320,8 +1462,23 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
         )}
 
+        {isGenerationFinancialPending && (
+          <div className="rounded-xl border border-sky-500/40 bg-sky-950/20 p-5 text-center space-y-2">
+            <div className="flex items-center justify-center gap-2 text-sky-300 font-bold text-sm">
+              <Activity className="h-5 w-5 text-sky-400" />
+              <span>Multi-Year Financial Projections Pending</span>
+            </div>
+            <p className="text-xs text-slate-300 max-w-2xl mx-auto leading-relaxed">
+              Multi-year cash flow projections, cumulative spend crossover, and lifecycle metrics for generation-integrated systems are pending implementation.
+            </p>
+            <p className="text-[11px] text-sky-400/90 font-mono">
+              Year-1 operational dispatch results, 24-hour interval profiles, and median load analytics below remain fully active.
+            </p>
+          </div>
+        )}
+
         {/* 2-COLUMN LAYOUT: LEFT-SIDE CONTROLS + RIGHT-SIDE CHART */}
-        {!isPartialPeriod && (
+        {hasFinancialAnalysis && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* LEFT-SIDE CONTROL PANEL */}
           <div className="lg:col-span-4 xl:col-span-3 space-y-5 bg-slate-950/80 p-4 rounded-xl border border-slate-800/90 text-xs">
@@ -2904,11 +3061,20 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 bg-slate-900/30">
-              {allAnalyses.length === 0 || isPartialPeriod ? (
+              {allAnalyses.length === 0 || isPartialPeriod || isGenerationFinancialPending ? (
                 <tr>
                   <td colSpan={11} className="py-8 px-4 text-center text-slate-400">
-                    <p className="text-sm font-medium">Multi-profile multi-year financial matrix is disabled for partial-period datasets.</p>
-                    <p className="text-xs text-slate-500 mt-1">Full 8,760-hour annual data is required for long-term multi-profile financial comparison.</p>
+                    {isGenerationFinancialPending ? (
+                      <>
+                        <p className="text-sm font-medium">Multi-profile financial matrix is pending for generation-aware systems.</p>
+                        <p className="text-xs text-slate-500 mt-1">Lifecycle financial comparison will be enabled in an upcoming release.</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium">Multi-profile multi-year financial matrix is disabled for partial-period datasets.</p>
+                        <p className="text-xs text-slate-500 mt-1">Full 8,760-hour annual data is required for long-term multi-profile financial comparison.</p>
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -3039,6 +3205,7 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
   activeTouProfile,
   financials,
   csvResult,
+  analysisState,
 }) => {
   const effectiveSummary = activeAnalysis ? activeAnalysis.annualSummary : activeSimulationSummary;
   const effectiveProfile = activeAnalysis ? activeAnalysis.profile : activeProfile;
@@ -3066,6 +3233,7 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
       activeTouProfile={activeTouProfile}
       financials={financials}
       csvResult={csvResult}
+      analysisState={analysisState}
     />
   );
 };

@@ -16,6 +16,10 @@ import {
   createDefaultAsset,
 } from '../utils/generationDefaults';
 import {
+  deriveAnalysisState,
+  shouldCalculateLegacyFinancials,
+} from '../utils/generationFinancials';
+import {
   BatteryProfile,
   GenerationConfig,
   GenerationSite,
@@ -424,8 +428,8 @@ describe('G3S — Application Integration & Final G3 Gate', () => {
     expect(res.mode).toBe('legacy');
   });
 
-  // 10. existing financial calculations still consume AnnualSimulationSummary
-  it('10. existing financial calculations still consume AnnualSimulationSummary', () => {
+  // 10. G4A routing contract: generation-aware mode adapts AnnualSimulationSummary contract but routes to pending lifecycle state
+  it('10. G4A routing contract: generation-aware mode adapts AnnualSimulationSummary contract but routes to pending lifecycle state', () => {
     const dataPoints = createDataPoints(48);
     const scheduleMatrix = createScheduleMatrix();
     const battery = DEFAULT_BATTERY_PROFILES[0];
@@ -448,20 +452,42 @@ describe('G3S — Application Integration & Final G3 Gate', () => {
     expect(unifiedResult.mode).toBe('generation-aware');
     const annualSummary = unifiedResult.annualSummary;
 
-    // Call calculate15YearFinancials directly with the AnnualSimulationSummary contract
-    const financials = calculate15YearFinancials(
+    // Structural compatibility of adapted AnnualSimulationSummary
+    expect(annualSummary).toBeDefined();
+    expect(annualSummary.profileId).toBe(battery.id);
+    expect(typeof annualSummary.year1Savings).toBe('number');
+    expect(typeof annualSummary.baselineAnnualCost).toBe('number');
+    expect(typeof annualSummary.simulatedAnnualCost).toBe('number');
+    expect(annualSummary.intervalResults).toHaveLength(48);
+
+    // G4A Production Safety Gate: generation-aware mode is NOT eligible for calculate15YearFinancials
+    const isEligibleForLegacyEngine = shouldCalculateLegacyFinancials(true, unifiedResult.mode);
+    expect(isEligibleForLegacyEngine).toBe(false);
+
+    // G4A Explicit State: full-year generation routes to generation-financial-pending
+    const analysisState = deriveAnalysisState(true, unifiedResult.mode);
+    expect(analysisState).toBe('generation-financial-pending');
+
+    // In contrast, legacy (no-generation) mode remains eligible for calculate15YearFinancials
+    const legacyResult = runUnifiedSimulation({
+      dataPoints,
+      intervalHours: 1,
+      tiers: DEFAULT_RATE_TIERS,
+      scheduleMatrix,
+      batteryProfile: battery,
+      generationConfig: createDefaultGenerationConfig(),
+      allowSolarExport: false,
+    });
+    expect(legacyResult.mode).toBe('legacy');
+    expect(shouldCalculateLegacyFinancials(true, legacyResult.mode)).toBe(true);
+    expect(deriveAnalysisState(true, legacyResult.mode)).toBe('legacy-financial');
+
+    const legacyFinancials = calculate15YearFinancials(
       battery,
-      annualSummary,
+      legacyResult.annualSummary,
       DEFAULT_MACRO_FINANCIALS
     );
-
-    expect(financials).toBeDefined();
-    expect(financials.profile.id).toBe(battery.id);
-    expect(financials.year1Savings).toBe(Math.round(annualSummary.year1Savings));
-    expect(financials.projections.length).toBeGreaterThanOrEqual(15);
-    expect(typeof financials.npv).toBe('number');
-    expect(typeof financials.lifetimeNetProfit).toBe('number');
-    expect(financials.paybackFormatted).toBeDefined();
-    expect(financials.projections[0].year).toBe(1);
+    expect(legacyFinancials).toBeDefined();
+    expect(legacyFinancials.year1Savings).toBe(Math.round(legacyResult.annualSummary.year1Savings));
   });
 });

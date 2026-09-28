@@ -1161,10 +1161,52 @@ export interface ExportAwareBatteryFlowResult {
   gridSocCostRemovedForExportUsd: number;
 }
 
+// ============================================================================
+// Financial Analysis Routing & Generation Project Cost Contracts (Milestone G4A)
+// ============================================================================
 
+export type AnalysisState =
+  | 'legacy-financial'
+  | 'generation-financial-pending'
+  | 'generation-financial'
+  | 'partial-period';
 
+export interface SolarAssetMetadata {
+  id: string;
+  name: string;
+  dcCapacityKw: number;
+  inverterAcCapacityKw: number;
+  annualDegradationPercent: number;
+  tiltDegrees?: number;
+  azimuthDegrees?: number;
+  installedCostUsd?: number;
+  annualMaintenanceCostUsd?: number;
+}
 
+export interface GenerationAssetCostBreakdown {
+  id: string;
+  name: string;
+  type: 'solar' | 'wind' | 'generator';
+  installedCostUsd: number;
+  annualMaintenanceCostUsd: number;
+}
 
+export interface GenerationTypeCostBreakdown {
+  type: 'solar' | 'wind' | 'generator';
+  installedCostUsd: number;
+  annualMaintenanceCostUsd: number;
+  assetCount?: number;
+}
 
+export type GenerationTypeCostMap = Record<
+  'solar' | 'wind' | 'generator',
+  GenerationTypeCostBreakdown
+>;
 
-
+export interface GenerationProjectCostSummary {
+  generationCapexUsd: number;
+  annualGenerationMaintenanceUsd: number;
+  byAsset: GenerationAssetCostBreakdown[];
+  byType: GenerationTypeCostBreakdown[] & GenerationTypeCostMap;
+  solarMetadata: SolarAssetMetadata[];
+}
