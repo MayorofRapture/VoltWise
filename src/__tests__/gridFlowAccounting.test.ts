@@ -709,5 +709,111 @@ describe('G3I — Grid Boundary Flow Accounting', () => {
         calculateExportAwareGridFlows([eai], true)
       ).not.toThrow();
     });
+
+    describe('Strict G3O/G3I metadata alignment', () => {
+      it('rejects preExportFlow sourceIndex mismatch and non-integer values', () => {
+        const eai = createMockExportAwareInterval(0);
+        eai.preExportFlow.sourceIndex = 1; // 1 !== 0
+        expect(() => calculateExportAwareGridFlows([eai], true)).toThrow(
+          /preExportFlow sourceIndex \(1\) !== interval sourceIndex \(0\)/i
+        );
+
+        // Non-integer in preExportFlow
+        const eaiNonInt = createMockExportAwareInterval(0);
+        (eaiNonInt.preExportFlow as unknown as { sourceIndex: number }).sourceIndex = 0.5;
+        expect(() => calculateExportAwareGridFlows([eaiNonInt], true)).toThrow(
+          /preExportFlow sourceIndex \(0\.5\) !== interval sourceIndex \(0\)/i
+        );
+      });
+
+      it('rejects preExportFlow sourceTimestamp mismatch', () => {
+        const eai = createMockExportAwareInterval(0);
+        eai.preExportFlow.sourceTimestamp = '2025-06-01 01:00';
+        expect(() => calculateExportAwareGridFlows([eai], true)).toThrow(
+          /preExportFlow sourceTimestamp \("2025-06-01 01:00"\) !== interval sourceTimestamp \("2025-06-01 00:00"\)/i
+        );
+      });
+
+      it('rejects preExportFlow timestampUtc mismatch', () => {
+        const eai = createMockExportAwareInterval(0);
+        eai.preExportFlow.timestampUtc = '2025-06-01T01:00:00.000Z';
+        expect(() => calculateExportAwareGridFlows([eai], true)).toThrow(
+          /preExportFlow timestampUtc \("2025-06-01T01:00:00.000Z"\) !== interval timestampUtc \("2025-06-01T00:00:00.000Z"\)/i
+        );
+      });
+
+      it('rejects preExportFlow tierId mismatch', () => {
+        const eai = createMockExportAwareInterval(0);
+        eai.preExportFlow.tierId = 'on-peak';
+        expect(() => calculateExportAwareGridFlows([eai], true)).toThrow(
+          /preExportFlow tierId \("on-peak"\) !== interval tierId \("off-peak"\)/i
+        );
+      });
+
+      it('rejects missing or invalid metadata where runtime casting bypasses TypeScript', () => {
+        // preExportFlow missing sourceIndex (undefined)
+        const eaiMissingFlowIdx = createMockExportAwareInterval(0);
+        delete (eaiMissingFlowIdx.preExportFlow as unknown as { sourceIndex?: number }).sourceIndex;
+        expect(() => calculateExportAwareGridFlows([eaiMissingFlowIdx], true)).toThrow(
+          /preExportFlow sourceIndex \(undefined\) !== interval sourceIndex \(0\)/i
+        );
+
+        // preExportFlow missing sourceTimestamp (undefined)
+        const eaiMissingFlowSourceTs = createMockExportAwareInterval(0);
+        delete (eaiMissingFlowSourceTs.preExportFlow as unknown as { sourceTimestamp?: string }).sourceTimestamp;
+        expect(() => calculateExportAwareGridFlows([eaiMissingFlowSourceTs], true)).toThrow(
+          /preExportFlow sourceTimestamp/i
+        );
+
+        // preExportFlow missing timestampUtc (undefined)
+        const eaiMissingFlowUtc = createMockExportAwareInterval(0);
+        delete (eaiMissingFlowUtc.preExportFlow as unknown as { timestampUtc?: string }).timestampUtc;
+        expect(() => calculateExportAwareGridFlows([eaiMissingFlowUtc], true)).toThrow(
+          /preExportFlow timestampUtc/i
+        );
+
+        // preExportFlow missing tierId (undefined)
+        const eaiMissingFlowTier = createMockExportAwareInterval(0);
+        delete (eaiMissingFlowTier.preExportFlow as unknown as { tierId?: string }).tierId;
+        expect(() => calculateExportAwareGridFlows([eaiMissingFlowTier], true)).toThrow(
+          /preExportFlow tierId/i
+        );
+
+        // Outer interval sourceIndex !== array index
+        const eaiOuterWrongIndex = createMockExportAwareInterval(0);
+        (eaiOuterWrongIndex as unknown as { sourceIndex: number }).sourceIndex = 1;
+        expect(() => calculateExportAwareGridFlows([eaiOuterWrongIndex], true)).toThrow(
+          /expected integer 0, received 1/i
+        );
+
+        // Outer interval sourceIndex is non-integer
+        const eaiOuterNonInt = createMockExportAwareInterval(0);
+        (eaiOuterNonInt as unknown as { sourceIndex: number }).sourceIndex = 0.5;
+        expect(() => calculateExportAwareGridFlows([eaiOuterNonInt], true)).toThrow(
+          /Invalid sourceIndex at index 0/i
+        );
+
+        // Outer interval sourceTimestamp empty string
+        const eaiOuterEmptySourceTs = createMockExportAwareInterval(0);
+        (eaiOuterEmptySourceTs as unknown as { sourceTimestamp: string }).sourceTimestamp = '   ';
+        expect(() => calculateExportAwareGridFlows([eaiOuterEmptySourceTs], true)).toThrow(
+          /Invalid sourceTimestamp at index 0/i
+        );
+
+        // Outer interval timestampUtc empty string
+        const eaiOuterEmptyUtc = createMockExportAwareInterval(0);
+        (eaiOuterEmptyUtc as unknown as { timestampUtc: string }).timestampUtc = '';
+        expect(() => calculateExportAwareGridFlows([eaiOuterEmptyUtc], true)).toThrow(
+          /Invalid timestampUtc at index 0/i
+        );
+
+        // Outer interval tierId empty string
+        const eaiOuterEmptyTier = createMockExportAwareInterval(0);
+        (eaiOuterEmptyTier as unknown as { tierId: string }).tierId = '';
+        expect(() => calculateExportAwareGridFlows([eaiOuterEmptyTier], true)).toThrow(
+          /Invalid tierId at index 0/i
+        );
+      });
+    });
   });
 });

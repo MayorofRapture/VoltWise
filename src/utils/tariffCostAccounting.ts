@@ -445,11 +445,21 @@ export function calculateExportAwareTariffCosts(
       );
     }
 
-    // Rate consistency validation
-    if (
-      Math.abs(eai.buyRate - rr.buyRate) > 1e-6 ||
-      Math.abs(eai.sellRate - rr.sellRate) > 1e-6
-    ) {
+    // Explicitly reject non-finite G3O rates before comparison
+    if (typeof eai.buyRate !== 'number' || !Number.isFinite(eai.buyRate)) {
+      throw new Error(
+        `Invalid buyRate in exportAwareIntervals at index ${i}: must be a finite number. Received: ${eai.buyRate}`
+      );
+    }
+
+    if (typeof eai.sellRate !== 'number' || !Number.isFinite(eai.sellRate)) {
+      throw new Error(
+        `Invalid sellRate in exportAwareIntervals at index ${i}: must be a finite number. Received: ${eai.sellRate}`
+      );
+    }
+
+    // Require exact rate equality with authoritative resolved rates (no tolerance/epsilon)
+    if (eai.buyRate !== rr.buyRate || eai.sellRate !== rr.sellRate) {
       throw new Error(
         `Resolved-rate mismatch at index ${i}: exportAwareIntervals rate (buy: ${eai.buyRate}, sell: ${eai.sellRate}) !== resolvedRates (buy: ${rr.buyRate}, sell: ${rr.sellRate}).`
       );

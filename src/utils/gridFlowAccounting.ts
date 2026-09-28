@@ -276,22 +276,25 @@ export function calculateExportAwareGridFlows(
       );
     }
 
-    if (
-      Number.isInteger(flow.sourceIndex) &&
-      flow.sourceIndex !== inv.sourceIndex
-    ) {
+    if (flow.sourceIndex !== inv.sourceIndex) {
       throw new Error(
         `Alignment error at index ${i}: preExportFlow sourceIndex (${flow.sourceIndex}) !== interval sourceIndex (${inv.sourceIndex}).`
       );
     }
 
-    if (flow.timestampUtc && flow.timestampUtc !== inv.timestampUtc) {
+    if (flow.sourceTimestamp !== inv.sourceTimestamp) {
+      throw new Error(
+        `Alignment error at index ${i}: preExportFlow sourceTimestamp ("${flow.sourceTimestamp}") !== interval sourceTimestamp ("${inv.sourceTimestamp}").`
+      );
+    }
+
+    if (flow.timestampUtc !== inv.timestampUtc) {
       throw new Error(
         `Alignment error at index ${i}: preExportFlow timestampUtc ("${flow.timestampUtc}") !== interval timestampUtc ("${inv.timestampUtc}").`
       );
     }
 
-    if (flow.tierId && flow.tierId !== inv.tierId) {
+    if (flow.tierId !== inv.tierId) {
       throw new Error(
         `Alignment error at index ${i}: preExportFlow tierId ("${flow.tierId}") !== interval tierId ("${inv.tierId}").`
       );

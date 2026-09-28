@@ -1514,5 +1514,109 @@ describe('Tariff Cost Accounting Engine (Milestone G3J)', () => {
         calculateExportAwareTariffCosts([gf], [eai], [rr])
       ).not.toThrow();
     });
+
+    it('17. requires exact tariff rate identity and rejects micro-differences and non-finite rates', () => {
+      const gf = createMockGridFlow(0, '2025-06-01T12:00:00.000Z');
+      const baseBuy = 0.25;
+      const baseSell = 0.15;
+
+      // Exact rates accepted
+      const eaiExact = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: baseSell,
+      });
+      const rrExact = createMockResolvedRate(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiExact], [rrExact])
+      ).not.toThrow();
+
+      // sellRate difference of +1e-10 rejected
+      const eaiSellPlus = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: baseSell + 1e-10,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiSellPlus], [rrExact])
+      ).toThrow(/Resolved-rate mismatch/i);
+
+      // sellRate difference of -1e-10 rejected
+      const eaiSellMinus = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: baseSell - 1e-10,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiSellMinus], [rrExact])
+      ).toThrow(/Resolved-rate mismatch/i);
+
+      // buyRate micro-difference rejected (+1e-10)
+      const eaiBuyPlus = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy + 1e-10,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiBuyPlus], [rrExact])
+      ).toThrow(/Resolved-rate mismatch/i);
+
+      // buyRate micro-difference rejected (-1e-10)
+      const eaiBuyMinus = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy - 1e-10,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiBuyMinus], [rrExact])
+      ).toThrow(/Resolved-rate mismatch/i);
+
+      // NaN/non-finite G3O rates rejected before comparison
+      const eaiBuyNan = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: NaN,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiBuyNan], [rrExact])
+      ).toThrow(/Invalid buyRate.*finite/i);
+
+      const eaiBuyInf = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: Infinity,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiBuyInf], [rrExact])
+      ).toThrow(/Invalid buyRate.*finite/i);
+
+      const eaiBuyNegInf = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: -Infinity,
+        sellRate: baseSell,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiBuyNegInf], [rrExact])
+      ).toThrow(/Invalid buyRate.*finite/i);
+
+      const eaiSellNan = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: NaN,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiSellNan], [rrExact])
+      ).toThrow(/Invalid sellRate.*finite/i);
+
+      const eaiSellInf = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: Infinity,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiSellInf], [rrExact])
+      ).toThrow(/Invalid sellRate.*finite/i);
+
+      const eaiSellNegInf = createMockExportAwareInterval(0, '2025-06-01T12:00:00.000Z', {
+        buyRate: baseBuy,
+        sellRate: -Infinity,
+      });
+      expect(() =>
+        calculateExportAwareTariffCosts([gf], [eaiSellNegInf], [rrExact])
+      ).toThrow(/Invalid sellRate.*finite/i);
+    });
   });
 });
