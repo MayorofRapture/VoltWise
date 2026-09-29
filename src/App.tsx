@@ -20,6 +20,9 @@ import {
   AnnualSimulationSummary,
   GenerationConfig,
   AnalysisState,
+  GenerationProjectCostSummary,
+  GenerationOperationalProjection,
+  GenerationFinancialAnalysis,
 } from './types/energy';
 import {
   DEFAULT_BATTERY_PROFILES,
@@ -37,7 +40,10 @@ import { DEFAULT_GENERATION_CONFIG, createDefaultGenerationConfig } from './util
 import {
   deriveAnalysisState,
   shouldCalculateLegacyFinancials,
+  aggregateGenerationProjectCosts,
+  calculateGenerationAwareFinancials,
 } from './utils/generationFinancials';
+import { calculateGenerationOperationalProjection } from './utils/generationProjection';
 import { generateRealistic8760Dataset } from './utils/sampleData';
 import { parseAndValidateEnergyCsv } from './utils/csvParser';
 import { Zap, ChevronRight, Activity, ArrowRight, Bookmark, AlertTriangle } from 'lucide-react';
@@ -173,6 +179,121 @@ export default function App() {
     csvResult?.completeness ? csvResult.completeness.isSuitableForAnnualProjection : true
   );
 
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
+  const activeUnifiedResult = unifiedResults[activeProfileId];
+  const activeSimulationSummary = allSimulationSummaries[activeProfileId] || null;
+
+  // 1b. Authoritative Generation Project Cost Summary (Milestone G4A)
+  const generationProjectCosts = useMemo<GenerationProjectCostSummary>(() => {
+    return aggregateGenerationProjectCosts(generationConfig);
+  }, [generationConfig]);
+
+  // 1c. 25-Year Operational Projection for the active battery profile only (Milestone G4B)
+  // Evaluated ONLY when dataset is suitable for annual projection and generation-aware simulation is active.
+  const { activeGenerationOperationalProjection, generationProjectionError } = useMemo(() => {
+    if (
+      !isSuitableForAnnual ||
+      !csvResult ||
+      !csvResult.isValid ||
+      csvResult.data.length === 0 ||
+      !activeUnifiedResult ||
+      activeUnifiedResult.mode !== 'generation-aware'
+    ) {
+      return {
+        activeGenerationOperationalProjection: null as GenerationOperationalProjection | null,
+        generationProjectionError: null as string | null,
+      };
+    }
+
+    try {
+      const projection = calculateGenerationOperationalProjection({
+        dataPoints: csvResult.data,
+        intervalHours: csvResult.intervalHours,
+        tiers,
+        scheduleMatrix,
+        batteryProfile: activeProfile,
+        seasons: activeTouProfile?.seasons,
+        generationConfig,
+        allowSolarExport,
+        macroFinancials: financials,
+      });
+      return {
+        activeGenerationOperationalProjection: projection,
+        generationProjectionError: null,
+      };
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+          ? err
+          : 'Failed to calculate generation operational projection.';
+      return {
+        activeGenerationOperationalProjection: null,
+        generationProjectionError: message,
+      };
+    }
+  }, [
+    isSuitableForAnnual,
+    csvResult,
+    activeUnifiedResult,
+    tiers,
+    scheduleMatrix,
+    activeProfile,
+    activeTouProfile,
+    generationConfig,
+    allowSolarExport,
+    financials,
+  ]);
+
+  // 1d. Lifecycle Financial Analysis for active generation project (Milestone G4C)
+  const { activeGenerationAnalysis, generationFinancialError } = useMemo(() => {
+    if (
+      !activeGenerationOperationalProjection ||
+      !isSuitableForAnnual ||
+      !activeUnifiedResult ||
+      activeUnifiedResult.mode !== 'generation-aware'
+    ) {
+      return {
+        activeGenerationAnalysis: null as GenerationFinancialAnalysis | null,
+        generationFinancialError: null as string | null,
+      };
+    }
+
+    try {
+      const analysis = calculateGenerationAwareFinancials({
+        batteryProfile: activeProfile,
+        operationalProjection: activeGenerationOperationalProjection,
+        projectCosts: generationProjectCosts,
+        financials,
+      });
+      return {
+        activeGenerationAnalysis: analysis,
+        generationFinancialError: null,
+      };
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+          ? err
+          : 'Failed to calculate generation financial lifecycle analysis.';
+      return {
+        activeGenerationAnalysis: null,
+        generationFinancialError: message,
+      };
+    }
+  }, [
+    activeGenerationOperationalProjection,
+    isSuitableForAnnual,
+    activeUnifiedResult,
+    activeProfile,
+    generationProjectCosts,
+    financials,
+  ]);
+
+  const generationAnalysisError = generationProjectionError || generationFinancialError;
+
   // 2. Compute 25-year financial projections ONLY if dataset is suitable for annual projection
   // AND simulation mode is 'legacy' (G4A Safety Gate: generation-aware results do not enter legacy financials)
   const allAnalyses = useMemo<ProfileFinancialAnalysis[]>(() => {
@@ -202,16 +323,13 @@ export default function App() {
     return allAnalyses.find((a) => a.profile.id === activeProfileId) || allAnalyses[0] || null;
   }, [allAnalyses, activeProfileId]);
 
-  const activeUnifiedResult = unifiedResults[activeProfileId];
   const analysisState = useMemo<AnalysisState>(() => {
     return deriveAnalysisState(
       isSuitableForAnnual,
-      activeUnifiedResult?.mode
+      activeUnifiedResult?.mode,
+      Boolean(activeGenerationAnalysis)
     );
-  }, [isSuitableForAnnual, activeUnifiedResult]);
-
-  const activeSimulationSummary = allSimulationSummaries[activeProfileId] || null;
-  const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
+  }, [isSuitableForAnnual, activeUnifiedResult, activeGenerationAnalysis]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-emerald-500/20 selection:text-emerald-400">
@@ -268,6 +386,33 @@ export default function App() {
                 </strong>
               </span>
             </div>
+          ) : analysisState === 'generation-financial' && activeGenerationAnalysis ? (
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-slate-400">
+              <span className="flex items-center gap-1">
+                <Bookmark className="h-3 w-3 text-emerald-400" />
+                Tariff:{' '}
+                <strong className="text-slate-200">{activeTouProfile.name}</strong>
+              </span>
+              <span>·</span>
+              <span>
+                Project:{' '}
+                <strong className="text-slate-200">{activeProfile.name} + Generation</strong>
+              </span>
+              <span>·</span>
+              <span>
+                {getHeaderSavingsLabel(true)}:{' '}
+                <strong className="text-emerald-400 font-mono">
+                  ${activeGenerationAnalysis.year1ElectricitySavingsUsd.toLocaleString()}/yr
+                </strong>
+              </span>
+              <span>·</span>
+              <span>
+                Payback:{' '}
+                <strong className="text-amber-300 font-mono">
+                  {activeGenerationAnalysis.paybackFormatted}
+                </strong>
+              </span>
+            </div>
           ) : activeSimulationSummary ? (
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-slate-400">
               <span className="flex items-center gap-1">
@@ -293,7 +438,7 @@ export default function App() {
                 <>
                   <span>·</span>
                   <span className="text-sky-400 font-mono text-[11px] bg-sky-950/60 border border-sky-500/30 px-2 py-0.5 rounded">
-                    Lifecycle Finance Pending
+                    Lifecycle Finance Unavailable
                   </span>
                 </>
               )}
@@ -387,6 +532,11 @@ export default function App() {
             financials={financials}
             csvResult={csvResult}
             analysisState={analysisState}
+            activeGenerationAnalysis={activeGenerationAnalysis}
+            activeGenerationOperationalProjection={activeGenerationOperationalProjection}
+            activeGenerationAwareResult={activeUnifiedResult?.mode === 'generation-aware' ? activeUnifiedResult.generationAwareResult ?? null : null}
+            generationProjectCosts={generationProjectCosts}
+            generationAnalysisError={generationAnalysisError}
           />
         )}
 
