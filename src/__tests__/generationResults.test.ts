@@ -5,6 +5,9 @@ import {
   formatUsd,
   formatPercent,
   shouldCalculateGenerationAwareFinancials,
+  resolveMultiProfileMatrixState,
+  formatSolarDegradationSummary,
+  formatSolarDegradationClause,
 } from '../utils/generationResults';
 import {
   aggregateGenerationProjectCosts,
@@ -68,7 +71,7 @@ describe('G4D — Generation Results & Analytics Integration', () => {
   }
 
   describe('1. Operational Results Adapter (deriveGenerationOperationalDisplayMetrics)', () => {
-    it('accurately extracts all authoritative Year-1 operational generation metrics', () => {
+    it('accurately extracts all authoritative Year-1 operational generation metrics from intervals', () => {
       const mockResult: GenerationAwareSimulationResult = {
         totalHomeLoadKwh: 10000,
         totalSolarGenerationKwh: 6000,
@@ -107,6 +110,7 @@ describe('G4D — Generation Results & Analytics Integration', () => {
       expect(metrics.totalSolarGenerationKwh).toBe(6000);
       expect(metrics.totalSolarDirectToLoadKwh).toBe(3500);
       expect(metrics.totalSolarToBatteryKwh).toBe(1200);
+      expect(metrics.solarToBatteryAcKwh).toBe(1200);
       expect(metrics.totalCurtailedSolarKwh).toBe(300);
       expect(metrics.totalSolarExportKwh).toBe(1000);
       expect(metrics.totalBatteryExportKwh).toBe(200);
@@ -127,7 +131,7 @@ describe('G4D — Generation Results & Analytics Integration', () => {
       expect(metrics.batteryExportKwh).toBe(metrics.totalBatteryExportKwh);
     });
 
-    it('gracefully handles missing intervals in preExportFlow', () => {
+    it('derives solar-to-battery strictly from authoritative intervals and ignores undeclared fallback properties', () => {
       const mockResult: GenerationAwareSimulationResult = {
         totalHomeLoadKwh: 5000,
         totalSolarGenerationKwh: 4000,
@@ -142,10 +146,13 @@ describe('G4D — Generation Results & Analytics Integration', () => {
         exportAwareBatteryFlow: undefined as any,
         gridFlows: undefined as any,
       } as unknown as GenerationAwareSimulationResult;
+      // Intentionally attach an ad-hoc undeclared property:
       (mockResult as any).solarToBatteryKwh = 1000;
 
       const metrics = deriveGenerationOperationalDisplayMetrics(mockResult);
-      expect(metrics.totalSolarToBatteryKwh).toBe(1000);
+      // Adapter must NOT read undeclared fallback property and must return 0
+      expect(metrics.solarToBatteryAcKwh).toBe(0);
+      expect(metrics.totalSolarToBatteryKwh).toBe(0);
       expect(metrics.totalCurtailedSolarKwh).toBe(0);
     });
 
@@ -159,7 +166,49 @@ describe('G4D — Generation Results & Analytics Integration', () => {
     });
   });
 
-  describe('2. State Derivation and G4 Routing Rules', () => {
+  describe('2. Multi-Array Solar Degradation Presentation', () => {
+    it('formats single solar array degradation clearly', () => {
+      const single = [{ name: 'Roof Array', annualDegradationPercent: 0.5 }];
+      expect(formatSolarDegradationSummary(single)).toBe('Solar degradation: 0.5%/yr');
+      expect(formatSolarDegradationClause(single)).toBe('solar DC degradation (0.5%/yr)');
+    });
+
+    it('distinguishes multiple solar arrays without fleet-averaging or picking only the first array', () => {
+      const multi = [
+        { name: 'Roof South', annualDegradationPercent: 0.3 },
+        { name: 'Garage', annualDegradationPercent: 0.8 },
+      ];
+      const summary = formatSolarDegradationSummary(multi);
+      const clause = formatSolarDegradationClause(multi);
+
+      // Must explicitly present both arrays and their rates
+      expect(summary).toBe('Solar degradation by array: Roof South 0.3%/yr · Garage 0.8%/yr');
+      expect(clause).toBe('per-array solar DC degradation (Roof South 0.3%/yr · Garage 0.8%/yr)');
+
+      // Must NOT collapse to only the first array (0.3%/yr)
+      expect(summary).not.toBe('Solar degradation: 0.3%/yr');
+      // Must NOT fleet-average (e.g. 0.55%/yr)
+      expect(summary).not.toContain('0.55%');
+    });
+
+    it('handles empty or missing solar metadata with safe defaults', () => {
+      expect(formatSolarDegradationSummary(null)).toBe('Solar degradation: 0.5%/yr');
+      expect(formatSolarDegradationSummary([])).toBe('Solar degradation: 0.5%/yr');
+      expect(formatSolarDegradationClause(null)).toBe('solar DC degradation (0.5%/yr)');
+    });
+  });
+
+  describe('3. Multi-Profile Matrix Presentation State', () => {
+    it('distinguishes legacy, full-year generation, pending generation, and partial-period states', () => {
+      expect(resolveMultiProfileMatrixState('legacy-financial')).toBe('legacy');
+      expect(resolveMultiProfileMatrixState('generation-financial')).toBe('generation-financial');
+      expect(resolveMultiProfileMatrixState('generation-financial-pending')).toBe('generation-financial-pending');
+      expect(resolveMultiProfileMatrixState('partial-period')).toBe('partial-period');
+      expect(resolveMultiProfileMatrixState('unknown' as any)).toBe('legacy');
+    });
+  });
+
+  describe('4. State Derivation and G4 Routing Rules', () => {
     it('preserves legacy-financial for full-year data with legacy simulation', () => {
       const state = deriveAnalysisState(true, 'legacy', true);
       expect(state).toBe('legacy-financial');
@@ -170,6 +219,7 @@ describe('G4D — Generation Results & Analytics Integration', () => {
     it('identifies generation-financial when full-year generation simulation has financial analysis', () => {
       const state = deriveAnalysisState(true, 'generation-aware', true);
       expect(state).toBe('generation-financial');
+      expect(state).not.toBe('partial-period');
       expect(shouldCalculateLegacyFinancials(true, 'generation-aware')).toBe(false);
       expect(shouldCalculateGenerationAwareFinancials(state)).toBe(true);
     });
@@ -177,6 +227,7 @@ describe('G4D — Generation Results & Analytics Integration', () => {
     it('identifies generation-financial-pending when full-year generation simulation has no financial analysis yet', () => {
       const state = deriveAnalysisState(true, 'generation-aware', false);
       expect(state).toBe('generation-financial-pending');
+      expect(state).not.toBe('partial-period');
       expect(shouldCalculateLegacyFinancials(true, 'generation-aware')).toBe(false);
       expect(shouldCalculateGenerationAwareFinancials(state)).toBe(true);
     });
@@ -184,33 +235,68 @@ describe('G4D — Generation Results & Analytics Integration', () => {
     it('identifies partial-period when data is not suitable for annual projection', () => {
       const state = deriveAnalysisState(false, 'generation-aware', false);
       expect(state).toBe('partial-period');
+      expect(state).not.toBe('generation-financial');
+      expect(state).not.toBe('generation-financial-pending');
       expect(shouldCalculateLegacyFinancials(false, 'generation-aware')).toBe(false);
       expect(shouldCalculateGenerationAwareFinancials(state)).toBe(false);
     });
   });
 
-  describe('3. Partial-Period Data Invariants', () => {
-    it('does not calculate long-term projection or lifecycle financials for partial-period data', () => {
+  describe('5. Partial-Period Data Invariants & Generation Availability', () => {
+    it('remains partial-period while retaining generation-aware operational simulation availability', () => {
       const partialData = createMockIntervalData(30); // 30 days
       const isSuitableForAnnual = false;
       const genConfig: GenerationConfig = {
         ...createDefaultGenerationConfig(),
-        assets: [createDefaultAsset('solar', 'solar-partial')],
+        site: {
+          latitude: 37.7749,
+          longitude: -122.4194,
+          timeZone: 'UTC',
+          elevationM: 16,
+        },
+        assets: [
+          {
+            ...(createDefaultAsset('solar', 'solar-partial') as SolarGenerationAsset),
+            dcCapacityKw: 5.0,
+            inverterAcCapacityKw: 4.0,
+            monthlyPeakSunHoursPerDay: [4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5],
+          },
+        ],
       };
 
-      // In production App orchestration:
+      // 1. Run simulation on partial data
+      const unifiedResult = runUnifiedSimulation({
+        dataPoints: partialData,
+        intervalHours: 1,
+        tiers: [...DEFAULT_RATE_TIERS],
+        scheduleMatrix: createScheduleMatrix(),
+        batteryProfile: profile,
+        allowSolarExport: true,
+        generationConfig: genConfig,
+      });
+
+      // Operational generation-aware simulation remains fully functional
+      expect(unifiedResult.mode).toBe('generation-aware');
+      expect(unifiedResult.generationAwareResult).toBeDefined();
+
+      const opMetrics = deriveGenerationOperationalDisplayMetrics(unifiedResult.generationAwareResult!);
+      expect(opMetrics.solarGeneratedKwh).toBeGreaterThan(0);
+      expect(opMetrics.homeLoadKwh).toBeGreaterThan(0);
+
       // Operational projection should ONLY run if isSuitableForAnnual is true
       const shouldRunG4B = isSuitableForAnnual && genConfig.assets.some((a) => a.enabled);
       expect(shouldRunG4B).toBe(false);
 
-      // Verify that partial-period analysis state forbids G4B/G4C
+      // Analysis state must strictly remain partial-period
       const state = deriveAnalysisState(isSuitableForAnnual, 'generation-aware', false);
       expect(state).toBe('partial-period');
+      expect(state).not.toBe('generation-financial');
+      expect(state).not.toBe('generation-financial-pending');
       expect(shouldCalculateGenerationAwareFinancials(state)).toBe(false);
     });
   });
 
-  describe('4. Full-Year G4B and G4C Integration & Horizon Summaries', () => {
+  describe('6. Full-Year G4B and G4C Integration & Horizon Summaries', () => {
     it('executes full pipeline and provides authoritative horizon summaries for UI consumption', () => {
       const fullYearData = createMockIntervalData(365);
       const scheduleMatrix = createScheduleMatrix();
@@ -263,7 +349,8 @@ describe('G4D — Generation Results & Analytics Integration', () => {
         batteryProfile: profile,
         generationConfig: genConfig,
         allowSolarExport: true,
-        macroFinancials: financials,
+        annualElectricityInflationRate: financials.annualElectricityInflationRate,
+        annualBatteryDegradationRate: financials.annualBatteryDegradationRate,
       });
 
       expect(operationalProjection.horizonYears).toBe(25);

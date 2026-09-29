@@ -50,6 +50,9 @@ import { GenerationAwareSimulationResult } from '../utils/generationAwareSimulat
 import {
   deriveGenerationOperationalDisplayMetrics,
   GenerationOperationalDisplayMetrics,
+  resolveMultiProfileMatrixState,
+  formatSolarDegradationClause,
+  formatSolarDegradationSummary,
 } from '../utils/generationResults';
 import {
   buildExportLlmJson,
@@ -140,6 +143,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   const hasLegacyFinancialAnalysis = currentAnalysisState === 'legacy-financial' && activeAnalysis !== null;
   const hasFinancialAnalysis = hasLegacyFinancialAnalysis;
   const isGenerationAware = activeGenerationAwareResult != null;
+  const multiProfileMatrixState = resolveMultiProfileMatrixState(currentAnalysisState);
 
   // Authoritative operational display metrics from G3 simulation
   const generationOperationalMetrics = useMemo<GenerationOperationalDisplayMetrics | null>(() => {
@@ -1102,12 +1106,12 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               <div className="flex flex-wrap items-center gap-3">
                 <span>Configured Battery Cost: <strong className="text-slate-200">${profile.installedCost.toLocaleString()}</strong></span>
                 <span>·</span>
-                <span>Configured Solar CAPEX: <strong className="text-slate-200">${generationProjectCosts.generationCapexUsd.toLocaleString()}</strong></span>
+                <span>Configured Generation CAPEX: <strong className="text-slate-200">${generationProjectCosts.generationCapexUsd.toLocaleString()}</strong></span>
                 <span>·</span>
                 <span>Total Configured CAPEX: <strong className="text-white">${(profile.installedCost + generationProjectCosts.generationCapexUsd).toLocaleString()}</strong></span>
               </div>
               <div>
-                <span>Configured Gen O&M: <strong className="text-amber-300">${generationProjectCosts.annualGenerationMaintenanceUsd.toLocaleString()}/yr</strong></span>
+                <span>Configured Generation O&M: <strong className="text-amber-300">${generationProjectCosts.annualGenerationMaintenanceUsd.toLocaleString()}/yr</strong></span>
               </div>
             </div>
           ) : null}
@@ -1159,6 +1163,8 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 ? (activeAnalysis.isFinanced ? 'Upfront Down Payment' : 'Net Out-of-Pocket Cost')
                 : isGenerationFinancialPending
                 ? 'Configured Battery Installed Cost'
+                : isGenerationAware
+                ? 'Configured Battery Cost'
                 : 'Configured Installed Cost'}
             </span>
             <DollarSign className="h-4 w-4 text-emerald-400" />
@@ -1785,7 +1791,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               </div>
             </div>
             <span className="text-[10px] text-slate-400 block font-mono">
-              Operational results active · Multi-year degradation and lifecycle finance pending
+              Operational results active · Lifecycle analysis unavailable for the current configuration/run
             </span>
           </div>
         </div>
@@ -1809,7 +1815,9 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <span className="text-white font-bold">${partialMetrics.baselinePeriodCostUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">With Battery:</span>
+                <span className="text-slate-400">
+                  {isGenerationAware ? 'Modeled Project Electricity Cost:' : 'With Battery:'}
+                </span>
                 <span className="text-cyan-300 font-bold">${partialMetrics.simulatedPeriodCostUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between pt-1 border-t border-slate-800">
@@ -1828,12 +1836,16 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
               <span className="flex items-center gap-1.5">
                 <BatteryCharging className="h-4 w-4 text-cyan-400" />
-                Battery Operation — Observed Period
+                {isGenerationAware
+                  ? 'Battery & Generation Operation — Observed Period'
+                  : 'Battery Operation — Observed Period'}
               </span>
               <span className="text-[10px] font-mono text-cyan-300">{partialMetrics.durationDays} Days</span>
             </div>
             <p className="text-[11px] text-slate-400">
-              Simulated battery activity and energy throughput over the {partialMetrics.durationDays}-day period:
+              {isGenerationAware
+                ? `Simulated battery and generation activity over the ${partialMetrics.durationDays}-day period:`
+                : `Simulated battery activity and energy throughput over the ${partialMetrics.durationDays}-day period:`}
             </p>
             <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-1 text-xs font-mono">
               <div className="flex justify-between">
@@ -1841,7 +1853,9 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <span className="text-white font-bold">{partialMetrics.totalHomeLoadKwh.toLocaleString()} kWh</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Grid Import:</span>
+                <span className="text-slate-400">
+                  {isGenerationAware ? 'Modeled Project Grid Import:' : 'Grid Import:'}
+                </span>
                 <span className="text-slate-200 font-bold">{partialMetrics.gridImportKwh.toLocaleString()} kWh</span>
               </div>
               <div className="flex justify-between">
@@ -1989,7 +2003,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
                 <span className="text-slate-300 font-medium block">Lifecycle Model</span>
                 <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 text-[11px] space-y-1.5 text-slate-400 leading-relaxed">
                   <p>
-                    <strong className="text-slate-200">Annual Physical Simulations:</strong> Modeled with per-array solar DC degradation ({generationProjectCosts?.solarMetadata[0]?.annualDegradationPercent ?? 0.5}%/yr), electrochemical battery capacity fade ({financials?.annualBatteryDegradationRate ?? 2}%/yr), and compound tariff escalation ({financials?.annualElectricityInflationRate ?? 3}%/yr).
+                    <strong className="text-slate-200">Annual Physical Simulations:</strong> Modeled with {formatSolarDegradationClause(generationProjectCosts?.solarMetadata)}, electrochemical battery capacity fade ({financials?.annualBatteryDegradationRate ?? 2}%/yr), and compound tariff escalation ({financials?.annualElectricityInflationRate ?? 3}%/yr).
                   </p>
                   <p className="text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-800">
                     Authoritative Year 1–25 physical evolution
@@ -3675,41 +3689,49 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-slate-800">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 font-medium">
-              <tr>
-                <th className="py-3 px-4">Battery Profile</th>
-                <th className="py-3 px-4">Strategy</th>
-                <th className="py-3 px-4 text-right">Capacity (Usable)</th>
-                <th className="py-3 px-4 text-right">Net Installed</th>
-                <th className="py-3 px-4 text-right">Year 1 Savings</th>
-                <th className="py-3 px-4 text-right">Payback</th>
-                <th className="py-3 px-4 text-right">25-Year NPV</th>
-                <th className="py-3 px-4 text-right">25-Year IRR</th>
-                <th className="py-3 px-4 text-right">25-Year LCOS</th>
-                <th className="py-3 px-4 text-right">Autonomy</th>
-                <th className="py-3 px-4 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/80 bg-slate-900/30">
-              {allAnalyses.length === 0 || isPartialPeriod || isGenerationFinancialPending ? (
+        {multiProfileMatrixState === 'generation-financial' ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-8 text-center space-y-2">
+            <p className="text-sm font-medium text-slate-200">
+              Generation lifecycle analysis is calculated for the active battery profile only.
+            </p>
+            <p className="text-xs text-slate-400 max-w-xl mx-auto leading-relaxed">
+              Multi-profile generation lifecycle comparison is not calculated because each battery profile would require its own 25-year physical projection.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 font-medium">
                 <tr>
-                  <td colSpan={11} className="py-8 px-4 text-center text-slate-400">
-                    {isGenerationFinancialPending ? (
-                      <>
-                        <p className="text-sm font-medium">Multi-profile financial matrix is pending for generation-aware systems.</p>
-                        <p className="text-xs text-slate-500 mt-1">Lifecycle financial comparison will be enabled in an upcoming release.</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm font-medium">Multi-profile multi-year financial matrix is disabled for partial-period datasets.</p>
-                        <p className="text-xs text-slate-500 mt-1">Full 8,760-hour annual data is required for long-term multi-profile financial comparison.</p>
-                      </>
-                    )}
-                  </td>
+                  <th className="py-3 px-4">Battery Profile</th>
+                  <th className="py-3 px-4">Strategy</th>
+                  <th className="py-3 px-4 text-right">Capacity (Usable)</th>
+                  <th className="py-3 px-4 text-right">Net Installed</th>
+                  <th className="py-3 px-4 text-right">Year 1 Savings</th>
+                  <th className="py-3 px-4 text-right">Payback</th>
+                  <th className="py-3 px-4 text-right">25-Year NPV</th>
+                  <th className="py-3 px-4 text-right">25-Year IRR</th>
+                  <th className="py-3 px-4 text-right">25-Year LCOS</th>
+                  <th className="py-3 px-4 text-right">Autonomy</th>
+                  <th className="py-3 px-4 text-center">Action</th>
                 </tr>
-              ) : (
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 bg-slate-900/30">
+                {multiProfileMatrixState === 'generation-financial-pending' ? (
+                  <tr>
+                    <td colSpan={11} className="py-8 px-4 text-center text-slate-400">
+                      <p className="text-sm font-medium">Lifecycle analysis unavailable for the current configuration/run.</p>
+                      <p className="text-xs text-slate-500 mt-1">Multi-profile comparison requires an available active generation lifecycle projection.</p>
+                    </td>
+                  </tr>
+                ) : multiProfileMatrixState === 'partial-period' || allAnalyses.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="py-8 px-4 text-center text-slate-400">
+                      <p className="text-sm font-medium">Multi-profile multi-year financial matrix is disabled for partial-period datasets.</p>
+                      <p className="text-xs text-slate-500 mt-1">Full 8,760-hour annual data is required for long-term multi-profile financial comparison.</p>
+                    </td>
+                  </tr>
+                ) : (
                 allAnalyses.map((analysis) => {
                 const isCurrent = analysis.profile.id === profile.id;
                 const isFastestPayback =
@@ -3821,6 +3843,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   );

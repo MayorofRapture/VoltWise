@@ -12,6 +12,7 @@
  */
 
 import { GenerationAwareSimulationResult } from './generationAwareSimulation';
+import { AnalysisState, SolarAssetMetadata } from '../types/energy';
 
 export interface GenerationOperationalDisplayMetrics {
   // Authoritative operational energy flows (kWh)
@@ -56,6 +57,8 @@ export interface GenerationOperationalDisplayMetrics {
  * Extracts and adapts authoritative operational presentation metrics from a GenerationAwareSimulationResult.
  *
  * Invariant: Sums authoritative interval values for solar-to-battery AC without modifying physics.
+ * Strictly adheres to GenerationAwareSimulationResult contract; returns 0 if intervals are absent
+ * and never reads undeclared fallback properties.
  */
 export function deriveGenerationOperationalDisplayMetrics(
   result: GenerationAwareSimulationResult
@@ -64,24 +67,19 @@ export function deriveGenerationOperationalDisplayMetrics(
     throw new Error('A valid GenerationAwareSimulationResult must be provided.');
   }
 
-  // Sum authoritative solarToBatteryAcKwh from preExportFlow intervals if present,
-  // or fall back to result.solarToBatteryKwh if intervals are not provided.
+  // Sum authoritative solarToBatteryAcKwh strictly from preExportFlow intervals.
+  // If intervals are absent, defaults to 0 with no ad-hoc fallback properties.
   let totalSolarToBatteryAcKwh = 0;
-  let hasIntervalData = false;
   if (result.exportAwareBatteryFlow?.intervals && Array.isArray(result.exportAwareBatteryFlow.intervals)) {
     for (let i = 0; i < result.exportAwareBatteryFlow.intervals.length; i++) {
       const interval = result.exportAwareBatteryFlow.intervals[i];
       if (interval?.preExportFlow) {
-        hasIntervalData = true;
         totalSolarToBatteryAcKwh += interval.preExportFlow.solarToBatteryAcKwh ?? 0;
       }
     }
   }
 
-  const solarToBatteryAc = hasIntervalData
-    ? Math.round(totalSolarToBatteryAcKwh * 100) / 100
-    : (Number((result as { solarToBatteryKwh?: number }).solarToBatteryKwh) || 0);
-
+  const solarToBatteryAc = Math.round(totalSolarToBatteryAcKwh * 100) / 100;
   const solarCurtailed = result.gridFlows?.totalCurtailedSolarKwh ?? 0;
 
   return {
@@ -147,4 +145,69 @@ export function formatPercent(value: number | null | undefined): string {
 /** Determines if generation-aware lifecycle financial engine should be called */
 export function shouldCalculateGenerationAwareFinancials(analysisState: string): boolean {
   return analysisState === 'generation-financial' || analysisState === 'generation-financial-pending';
+}
+
+export type MultiProfileMatrixMode =
+  | 'legacy'
+  | 'generation-financial'
+  | 'generation-financial-pending'
+  | 'partial-period';
+
+/**
+ * Resolves the presentation mode for the multi-profile matrix section.
+ * Explicitly distinguishes legacy-financial, generation-financial,
+ * generation-financial-pending, and partial-period.
+ */
+export function resolveMultiProfileMatrixState(
+  analysisState: AnalysisState | string
+): MultiProfileMatrixMode {
+  if (analysisState === 'generation-financial') {
+    return 'generation-financial';
+  }
+  if (analysisState === 'generation-financial-pending') {
+    return 'generation-financial-pending';
+  }
+  if (analysisState === 'partial-period') {
+    return 'partial-period';
+  }
+  return 'legacy';
+}
+
+/**
+ * Formats solar degradation display description for single or multi-array configurations.
+ * Prevents presenting a single array's degradation rate as a fleet-wide value.
+ */
+export function formatSolarDegradationSummary(
+  solarMetadata?: Array<Partial<SolarAssetMetadata>> | null
+): string {
+  if (!solarMetadata || solarMetadata.length === 0) {
+    return 'Solar degradation: 0.5%/yr';
+  }
+  if (solarMetadata.length === 1) {
+    const rate = solarMetadata[0].annualDegradationPercent ?? 0.5;
+    return `Solar degradation: ${rate}%/yr`;
+  }
+  const byArray = solarMetadata
+    .map((m) => `${m.name || 'Array'} ${m.annualDegradationPercent ?? 0.5}%/yr`)
+    .join(' · ');
+  return `Solar degradation by array: ${byArray}`;
+}
+
+/**
+ * Formats solar degradation clause for inline sentence presentation.
+ */
+export function formatSolarDegradationClause(
+  solarMetadata?: Array<Partial<SolarAssetMetadata>> | null
+): string {
+  if (!solarMetadata || solarMetadata.length === 0) {
+    return 'solar DC degradation (0.5%/yr)';
+  }
+  if (solarMetadata.length === 1) {
+    const rate = solarMetadata[0].annualDegradationPercent ?? 0.5;
+    return `solar DC degradation (${rate}%/yr)`;
+  }
+  const byArray = solarMetadata
+    .map((m) => `${m.name || 'Array'} ${m.annualDegradationPercent ?? 0.5}%/yr`)
+    .join(' · ');
+  return `per-array solar DC degradation (${byArray})`;
 }

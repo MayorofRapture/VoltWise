@@ -215,7 +215,8 @@ export default function App() {
         seasons: activeTouProfile?.seasons,
         generationConfig,
         allowSolarExport,
-        macroFinancials: financials,
+        annualElectricityInflationRate: financials.annualElectricityInflationRate,
+        annualBatteryDegradationRate: financials.annualBatteryDegradationRate,
       });
       return {
         activeGenerationOperationalProjection: projection,
@@ -243,7 +244,8 @@ export default function App() {
     activeTouProfile,
     generationConfig,
     allowSolarExport,
-    financials,
+    financials.annualElectricityInflationRate,
+    financials.annualBatteryDegradationRate,
   ]);
 
   // 1d. Lifecycle Financial Analysis for active generation project (Milestone G4C)
