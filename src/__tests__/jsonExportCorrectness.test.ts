@@ -1402,6 +1402,45 @@ describe('G4E — Generation JSON Export & Final Feature Integration', () => {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     });
+
+    it('46. Resilience critical_home_load_kw comes directly from financials and remains distinct from battery max continuous discharge', () => {
+      const customBatteryProfile = {
+        ...profile,
+        maxContinuousOutputKw: 11.5,
+      };
+
+      const customFinancials = {
+        ...sampleFinancials,
+        criticalLoadPowerKw: 2.75,
+      };
+
+      const customAnalysis = calculateGenerationAwareFinancials({
+        batteryProfile: customBatteryProfile,
+        operationalProjection: mockOperationalProjection25,
+        projectCosts: generationProjectCosts,
+        financials: customFinancials,
+      });
+
+      const exportData = buildGenerationExportLlmJson({
+        generationConfig: sampleGenerationConfig,
+        allowSolarExport: true,
+        generationAwareResult: mockGenerationAwareResult,
+        operationalProjection: mockOperationalProjection25,
+        generationAnalysis: customAnalysis,
+        generationProjectCosts,
+        projectionHorizon: 15,
+        tiers,
+        activeTouProfile: touProfile,
+        financials: customFinancials,
+        csvResult: mockCsvResult,
+      });
+
+      expect(exportData.battery_configuration.max_continuous_discharge_kw).toBe(11.5);
+      expect(exportData.financial_assumptions.resilience.critical_home_load_kw).toBe(2.75);
+      expect(exportData.financial_assumptions.resilience.critical_home_load_kw).not.toBe(
+        exportData.battery_configuration.max_continuous_discharge_kw
+      );
+    });
   });
 });
 

@@ -967,7 +967,7 @@ export function buildGenerationExportLlmJson(
         replacement_year: replacementYear,
       },
       resilience: {
-        critical_home_load_kw: batteryProfile.maxContinuousOutputKw,
+        critical_home_load_kw: financials.criticalLoadPowerKw,
         annual_outage_days: financials.annualOutageDays ?? 2.5,
         value_of_lost_load_usd_per_day: financials.valueOfLostLoadPerDay ?? 100,
         include_voll_in_roi: financials.includeVollInRoi ?? false,
