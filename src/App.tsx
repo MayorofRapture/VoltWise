@@ -539,6 +539,8 @@ export default function App() {
             activeGenerationAwareResult={activeUnifiedResult?.mode === 'generation-aware' ? activeUnifiedResult.generationAwareResult ?? null : null}
             generationProjectCosts={generationProjectCosts}
             generationAnalysisError={generationAnalysisError}
+            generationConfig={generationConfig}
+            allowSolarExport={allowSolarExport}
           />
         )}
 

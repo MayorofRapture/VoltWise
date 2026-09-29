@@ -41,6 +41,7 @@ import {
   YearProjection,
   IntervalSimulationResult,
   AnalysisState,
+  GenerationConfig,
   GenerationFinancialAnalysis,
   GenerationOperationalProjection,
   GenerationProjectCostSummary,
@@ -58,6 +59,8 @@ import {
   buildExportLlmJson,
   canExportProjectionsJson,
   canExportProjectionsCsv,
+  buildGenerationExportLlmJson,
+  canExportGenerationProjectionsJson,
 } from '../utils/exportJson';
 import {
   deriveHorizonFinancialSummary,
@@ -87,6 +90,10 @@ export interface ResultsAnalyticsTabProps {
   activeGenerationAwareResult?: GenerationAwareSimulationResult | null;
   generationProjectCosts?: GenerationProjectCostSummary | null;
   generationAnalysisError?: string | null;
+
+  // G4E Generation export props:
+  generationConfig?: GenerationConfig | null;
+  allowSolarExport?: boolean;
 }
 
 interface ResultsAnalyticsContentProps {
@@ -107,6 +114,10 @@ interface ResultsAnalyticsContentProps {
   activeGenerationAwareResult?: GenerationAwareSimulationResult | null;
   generationProjectCosts?: GenerationProjectCostSummary | null;
   generationAnalysisError?: string | null;
+
+  // G4E Generation export props:
+  generationConfig?: GenerationConfig | null;
+  allowSolarExport?: boolean;
 }
 
 const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
@@ -125,6 +136,8 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   activeGenerationAwareResult,
   generationProjectCosts,
   generationAnalysisError,
+  generationConfig,
+  allowSolarExport,
 }) => {
   const completeness = csvResult?.completeness;
   const isSuitableForAnnual = Boolean(
@@ -426,7 +439,72 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
   };
 
   // Export complete analysis structured for LLM analysis & reporting (.json)
+  const canExportJson = isGenerationFinancial
+    ? Boolean(
+        generationConfig &&
+        activeGenerationAnalysis &&
+        activeGenerationOperationalProjection &&
+        activeGenerationAwareResult &&
+        generationProjectCosts &&
+        canExportGenerationProjectionsJson({
+          generationAnalysis: activeGenerationAnalysis,
+          operationalProjection: activeGenerationOperationalProjection,
+          generationAwareResult: activeGenerationAwareResult,
+          generationProjectCosts,
+          csvResult,
+          analysisState: currentAnalysisState,
+        })
+      )
+    : Boolean(
+        !isPartialPeriod &&
+        !isGenerationFinancialPending &&
+        activeAnalysis &&
+        canExportProjectionsJson(activeAnalysis, csvResult)
+      );
+
   const handleExportLlmJson = () => {
+    if (!canExportJson) {
+      return;
+    }
+
+    if (
+      isGenerationFinancial &&
+      activeGenerationAnalysis &&
+      activeGenerationOperationalProjection &&
+      activeGenerationAwareResult &&
+      generationProjectCosts &&
+      generationConfig
+    ) {
+      const exportPayload = buildGenerationExportLlmJson({
+        generationConfig,
+        allowSolarExport: Boolean(allowSolarExport),
+        generationAwareResult: activeGenerationAwareResult,
+        operationalProjection: activeGenerationOperationalProjection,
+        generationAnalysis: activeGenerationAnalysis,
+        generationProjectCosts,
+        projectionHorizon,
+        tiers,
+        activeTouProfile,
+        financials,
+        csvResult,
+      });
+
+      const jsonString = JSON.stringify(exportPayload, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'generation_project_analysis_export.json');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setHasExportedJson(true);
+      setTimeout(() => setHasExportedJson(false), 3000);
+      return;
+    }
+
     if (isPartialPeriod || isGenerationFinancialPending || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)) {
       return;
     }
@@ -886,17 +964,19 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleExportLlmJson}
-            disabled={isPartialPeriod || isGenerationFinancialPending || isGenerationFinancial || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)}
+            disabled={!canExportJson}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all border whitespace-nowrap shadow-sm ${
-              isPartialPeriod || isGenerationFinancialPending || isGenerationFinancial || !activeAnalysis || !canExportProjectionsJson(activeAnalysis, csvResult)
+              !canExportJson
                 ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border-slate-800'
                 : hasExportedJson
                 ? 'bg-emerald-600 text-white border-emerald-400 shadow-emerald-900/50'
                 : 'text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/90 border-emerald-500/50 shadow-emerald-950 hover:border-emerald-400'
             }`}
             title={
-              isGenerationFinancial || isGenerationFinancialPending
-                ? 'Export for generation-integrated projects will be available in milestone G4E'
+              isGenerationFinancial
+                ? 'Download clean, pretty-printed generation_project_analysis_export.json formatted for LLM analysis and reporting'
+                : isGenerationFinancialPending
+                ? 'Generation financial analysis is pending'
                 : isPartialPeriod || !activeAnalysis
                 ? 'Export disabled for partial-period or incomplete datasets'
                 : 'Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting'
@@ -908,7 +988,11 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
               <FileJson className="h-3.5 w-3.5 text-emerald-400" />
             )}
             <span>
-              {hasExportedJson ? 'Exported battery_analysis_export.json' : 'Export Analysis for LLM (.json)'}
+              {hasExportedJson
+                ? isGenerationFinancial
+                  ? 'Exported generation_project_analysis_export.json'
+                  : 'Exported battery_analysis_export.json'
+                : 'Export Analysis for LLM (.json)'}
             </span>
           </button>
 
@@ -922,7 +1006,7 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             }`}
             title={
               isGenerationFinancial || isGenerationFinancialPending
-                ? 'Export for generation-integrated projects will be available in milestone G4E'
+                ? 'Projections CSV export for generation-integrated projects is out of scope'
                 : isPartialPeriod || !activeAnalysis
                 ? 'Export disabled for partial-period or incomplete datasets'
                 : 'Export Projections CSV'
@@ -2328,8 +2412,21 @@ const ResultsAnalyticsContent: React.FC<ResultsAnalyticsContentProps> = ({
             {/* LLM JSON Export Shortcut */}
             <button
               onClick={handleExportLlmJson}
-              className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 transition-colors shadow-sm"
-              title="Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting"
+              disabled={!canExportJson}
+              className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-colors shadow-sm ${
+                !canExportJson
+                  ? 'opacity-50 cursor-not-allowed bg-slate-900 text-slate-500 border border-slate-800'
+                  : 'bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300'
+              }`}
+              title={
+                isGenerationFinancial
+                  ? 'Download clean, pretty-printed generation_project_analysis_export.json formatted for LLM analysis and reporting'
+                  : isGenerationFinancialPending
+                  ? 'Generation financial analysis is pending'
+                  : isPartialPeriod || !activeAnalysis
+                  ? 'Export disabled for partial-period or incomplete datasets'
+                  : 'Download clean, pretty-printed battery_analysis_export.json formatted for LLM analysis and reporting'
+              }
             >
               <FileJson className="h-3.5 w-3.5 text-emerald-400" />
               <span>Export Analysis for LLM (.json)</span>
@@ -3866,6 +3963,8 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
   activeGenerationAwareResult,
   generationProjectCosts,
   generationAnalysisError,
+  generationConfig,
+  allowSolarExport,
 }) => {
   const effectiveSummary = activeAnalysis ? activeAnalysis.annualSummary : activeSimulationSummary;
   const effectiveProfile = activeAnalysis ? activeAnalysis.profile : activeProfile;
@@ -3899,6 +3998,8 @@ export const ResultsAnalyticsTab: React.FC<ResultsAnalyticsTabProps> = ({
       activeGenerationAwareResult={activeGenerationAwareResult}
       generationProjectCosts={generationProjectCosts}
       generationAnalysisError={generationAnalysisError}
+      generationConfig={generationConfig}
+      allowSolarExport={allowSolarExport}
     />
   );
 };

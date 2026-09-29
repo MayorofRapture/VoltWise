@@ -3,16 +3,25 @@
  * Ensures strict consistency between selected projection horizon and exported KPIs.
  */
 import {
+  AnalysisState,
   BatteryProfile,
   CsvValidationResult,
+  GenerationConfig,
+  GenerationFinancialAnalysis,
+  GenerationOperationalProjection,
+  GenerationProjectCostSummary,
   MacroFinancials,
   ProfileFinancialAnalysis,
   RateTier,
+  SolarGenerationAsset,
   TouProfile,
   YearProjection,
 } from '../types/energy';
 import { APP_VERSION } from '../version';
 import { deriveHorizonFinancialSummary } from './simulationEngine';
+import { deriveGenerationOperationalDisplayMetrics } from './generationResults';
+import { deriveGenerationHorizonFinancialSummary } from './generationFinancials';
+import { GenerationAwareSimulationResult } from './generationAwareSimulation';
 
 export interface ExportLlmJsonParams {
   activeAnalysis: ProfileFinancialAnalysis;
@@ -464,4 +473,572 @@ export function generateProjectionsCsv(
   ]);
 
   return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+}
+
+// ============================================================================
+// Generation-Aware LLM JSON Export Contracts & Builder (Milestone G4E)
+// ============================================================================
+
+export interface GenerationExportSolarArray {
+  id: string;
+  name: string;
+  resource_mode: string;
+  dc_capacity_kw: number;
+  inverter_ac_capacity_kw: number;
+  inverter_efficiency_pct: number;
+  tilt_degrees: number;
+  azimuth_degrees: number;
+  system_loss_pct: number;
+  shading_loss_pct: number;
+  annual_degradation_pct: number;
+  monthly_peak_sun_hours_per_day?: number[];
+}
+
+export interface GenerationExportAnnualProjectionRow {
+  year: number;
+  solar_generation_kwh: number;
+  solar_assets: Array<{
+    asset_id: string;
+    capacity_retention_factor: number;
+    effective_dc_capacity_kw: number;
+  }>;
+  battery_capacity_retention_factor: number;
+  battery_usable_capacity_kwh: number;
+  baseline_electricity_cost_usd: number;
+  modeled_project_electricity_cost_usd: number;
+  electricity_savings_usd: number;
+  generation_om_usd: number;
+  replacement_expense_usd: number;
+  annual_loan_payment_usd: number;
+  tax_credit_inflow_usd: number;
+  project_annual_cash_flow_usd: number;
+  cumulative_project_cash_flow_usd: number;
+  cumulative_npv_usd: number;
+
+  solar_direct_to_load_kwh: number;
+  solar_to_battery_kwh: number;
+  solar_export_kwh: number;
+  solar_curtailed_kwh: number;
+  grid_import_kwh: number;
+  grid_export_kwh: number;
+  battery_export_kwh: number;
+  battery_discharged_kwh: number;
+  equivalent_full_cycles: number;
+}
+
+export interface GenerationLlmExportPayload {
+  metadata: {
+    app_name: string;
+    app_version: string;
+    export_timestamp: string;
+    selected_horizon_years: number;
+    currency: string;
+    dataset_summary: {
+      start_date: string;
+      end_date: string;
+      total_intervals: number;
+      interval_duration_hours: number;
+      duration_days: number;
+      total_home_load_kwh: number;
+      is_suitable_for_annual_projection: boolean;
+      completeness_reason: string | null;
+    };
+  };
+  battery_configuration: {
+    profile_name: string;
+    model: string;
+    total_capacity_kwh: number;
+    usable_dod_pct: number;
+    usable_capacity_kwh: number;
+    max_continuous_discharge_kw: number;
+    max_continuous_charge_kw: number;
+    round_trip_efficiency_pct: number;
+    rated_cycle_life: number;
+    dispatch_strategy: string;
+    charge_tiers: string[];
+    discharge_tiers: string[];
+    allow_grid_export: boolean;
+    battery_grid_export_permission: boolean;
+    installed_cost_usd: number;
+  };
+  tariff_configuration: {
+    profile_name: string;
+    utility: string;
+    description: string;
+    rate_tiers: Array<{
+      id: string;
+      name: string;
+      buy_rate_usd_per_kwh: number;
+      sell_rate_usd_per_kwh: number;
+      color: string;
+    }>;
+    seasons: Array<{
+      id: string;
+      name: string;
+      months: number[];
+      tier_rates: Record<string, { buyRate: number; sellRate: number }>;
+    }>;
+    schedule_matrix: string[][];
+  };
+  financial_assumptions: {
+    annual_electricity_inflation_rate_pct: number;
+    annual_battery_degradation_rate_pct: number;
+    discount_rate_pct: number;
+    federal_tax_credit_pct: number;
+    federal_tax_credit_realization_year: number;
+    local_rebate_flat_usd: number;
+    financing: {
+      is_financed: boolean;
+      loan_apr_pct: number;
+      loan_term_years: number;
+      down_payment_pct: number;
+      loan_principal_usd: number;
+      monthly_loan_payment_usd: number;
+      down_payment_usd: number | null;
+      total_loan_interest_usd: number | null;
+    };
+    opportunity_cost: {
+      vehicle: string;
+      vehicle_name: string;
+      benchmark_rate_pct: number;
+      horizon_future_value_usd: number;
+      horizon_opportunity_profit_usd: number;
+    };
+    replacement: {
+      replacement_enabled: boolean;
+      replacement_cost_usd: number | null;
+      replacement_year: number | null;
+    };
+    resilience: {
+      critical_home_load_kw: number;
+      annual_outage_days: number;
+      value_of_lost_load_usd_per_day: number;
+      include_voll_in_roi: boolean;
+    };
+  };
+  generation_configuration: {
+    site: {
+      latitude: number | null;
+      longitude: number | null;
+      time_zone: string;
+      elevation_m: number | null;
+    };
+    allow_solar_export: boolean;
+    solar_export_permission: boolean;
+    solar_arrays: GenerationExportSolarArray[];
+    enabled_solar_arrays: GenerationExportSolarArray[];
+  };
+  generation_year_1_results: {
+    total_home_load_kwh: number;
+    solar_generated_kwh: number;
+    solar_direct_to_load_kwh: number;
+    solar_to_battery_ac_kwh: number;
+    solar_export_kwh: number;
+    solar_curtailed_kwh: number;
+    grid_import_kwh: number;
+    grid_export_kwh: number;
+    battery_export_kwh: number;
+    baseline_electricity_cost_usd: number;
+    modeled_project_electricity_cost_usd: number;
+    electricity_savings_usd: number;
+  };
+  generation_project_costs: {
+    battery_capex_usd: number;
+    generation_capex_usd: number;
+    gross_project_capex_usd: number;
+    annual_generation_om_usd: number;
+    immediate_rebate_usd: number;
+    deferred_federal_tax_credit_usd: number;
+    total_incentives_usd: number;
+    net_installed_project_cost_usd: number;
+    upfront_out_of_pocket_usd: number;
+    is_financed: boolean;
+    loan_principal_usd: number;
+    monthly_loan_payment_usd: number;
+    total_loan_payments_usd: number;
+    total_loan_interest_usd: number;
+    generation_assets: Array<{
+      id: string;
+      name: string;
+      type: string;
+      installed_cost_usd: number;
+      annual_maintenance_cost_usd: number;
+    }>;
+  };
+  generation_horizon_summary_kpis: {
+    horizon_years: number;
+    horizon_net_present_value_usd: number;
+    horizon_cumulative_project_cash_flow_usd: number;
+    horizon_cumulative_electricity_savings_usd: number;
+    horizon_generation_maintenance_usd: number;
+    horizon_replacement_expenses_usd: number;
+    horizon_loan_payments_usd: number;
+    horizon_tax_credit_inflows_usd: number;
+    simple_payback_years: number | null;
+    discounted_payback_years: number | null;
+    horizon_roi_pct: number;
+    total_project_cash_outlays_usd: number;
+    opportunity_cost_future_value_usd: number;
+    opportunity_cost_profit_usd: number;
+    project_vs_opportunity_cost_usd: number;
+  };
+  generation_annual_projection: GenerationExportAnnualProjectionRow[];
+}
+
+export interface BuildGenerationExportLlmJsonParams {
+  generationConfig: GenerationConfig;
+  allowSolarExport: boolean;
+  generationAwareResult: GenerationAwareSimulationResult;
+  operationalProjection: GenerationOperationalProjection;
+  generationAnalysis: GenerationFinancialAnalysis;
+  generationProjectCosts: GenerationProjectCostSummary;
+  projectionHorizon: number;
+  tiers: RateTier[];
+  activeTouProfile?: TouProfile;
+  financials: MacroFinancials;
+  csvResult?: CsvValidationResult | null;
+}
+
+export interface CanExportGenerationProjectionsJsonParams {
+  generationAnalysis?: GenerationFinancialAnalysis | null;
+  operationalProjection?: GenerationOperationalProjection | null;
+  generationAwareResult?: GenerationAwareSimulationResult | null;
+  generationProjectCosts?: GenerationProjectCostSummary | null;
+  csvResult?: CsvValidationResult | null;
+  analysisState?: AnalysisState;
+}
+
+/**
+ * Validates whether a generation analysis can be exported to projection JSON.
+ * Returns false if any required authoritative inputs are missing, or if dataset is partial-period,
+ * or if generation financial analysis is in a pending state.
+ */
+export function canExportGenerationProjectionsJson(
+  params: CanExportGenerationProjectionsJsonParams
+): boolean {
+  const {
+    generationAnalysis,
+    operationalProjection,
+    generationAwareResult,
+    generationProjectCosts,
+    csvResult,
+    analysisState,
+  } = params;
+
+  if (analysisState === 'generation-financial-pending' || analysisState === 'partial-period') {
+    return false;
+  }
+
+  if (csvResult?.completeness && !csvResult.completeness.isSuitableForAnnualProjection) {
+    return false;
+  }
+
+  if (
+    !generationAnalysis ||
+    !operationalProjection ||
+    !generationAwareResult ||
+    !generationProjectCosts
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Builds an authoritative Generation Project LLM JSON export payload.
+ * Consumes existing G3/G4 engines exclusively; performs zero independent physical or financial recalculation.
+ */
+export function buildGenerationExportLlmJson(
+  params: BuildGenerationExportLlmJsonParams
+): GenerationLlmExportPayload {
+  const {
+    generationConfig,
+    allowSolarExport,
+    generationAwareResult,
+    operationalProjection,
+    generationAnalysis,
+    generationProjectCosts,
+    projectionHorizon,
+    tiers,
+    activeTouProfile,
+    financials,
+    csvResult,
+  } = params;
+
+  if (csvResult?.completeness && !csvResult.completeness.isSuitableForAnnualProjection) {
+    throw new Error('Cannot export multi-year generation projections for an incomplete or partial-period dataset.');
+  }
+
+  if (
+    !generationConfig ||
+    !generationAwareResult ||
+    !operationalProjection ||
+    !generationAnalysis ||
+    !generationProjectCosts
+  ) {
+    throw new Error('All authoritative generation simulation, operational, cost, and financial outputs must be provided.');
+  }
+
+  const safeHorizon = Math.max(1, Math.min(25, Math.round(projectionHorizon || 0)));
+
+  const opYears = operationalProjection.years || [];
+  const finYears = generationAnalysis.projections || [];
+
+  if (opYears.length < safeHorizon || finYears.length < safeHorizon) {
+    throw new Error(`Insufficient projection rows for selected horizon of ${safeHorizon} years.`);
+  }
+
+  // Strict check: operational and financial projections must pair on identical years
+  for (let i = 0; i < safeHorizon; i++) {
+    const opYear = opYears[i];
+    const finYear = finYears[i];
+    if (!opYear || !finYear || opYear.year !== finYear.year) {
+      throw new Error(
+        `Operational year (${opYear?.year}) and financial year (${finYear?.year}) mismatch at index ${i}.`
+      );
+    }
+  }
+
+  // Authoritative presentation metrics from G4D adapter
+  const opDisplay = deriveGenerationOperationalDisplayMetrics(generationAwareResult);
+
+  // Authoritative horizon summary from G4C engine
+  const horizonSummary = deriveGenerationHorizonFinancialSummary(generationAnalysis, safeHorizon);
+
+  // Battery configuration context
+  const batteryProfile = generationAnalysis.batteryProfile;
+  const usableDod = batteryProfile.usableDodPercent;
+  const usableCapacity = Math.round(batteryProfile.totalCapacityKwh * (usableDod / 100) * 100) / 100;
+
+  // Enabled solar assets only
+  const enabledSolarAssets = (generationConfig.assets || []).filter(
+    (a): a is SolarGenerationAsset => a != null && a.type === 'solar' && a.enabled === true
+  );
+
+  const solarArraysExport: GenerationExportSolarArray[] = enabledSolarAssets.map((asset) => {
+    const entry: GenerationExportSolarArray = {
+      id: asset.id,
+      name: asset.name,
+      resource_mode: asset.resourceMode,
+      dc_capacity_kw: asset.dcCapacityKw,
+      inverter_ac_capacity_kw: asset.inverterAcCapacityKw,
+      inverter_efficiency_pct: asset.inverterEfficiencyPercent,
+      tilt_degrees: asset.tiltDegrees,
+      azimuth_degrees: asset.azimuthDegrees,
+      system_loss_pct: asset.systemLossPercent,
+      shading_loss_pct: asset.shadingLossPercent,
+      annual_degradation_pct: asset.annualDegradationPercent,
+    };
+    if (asset.monthlyPeakSunHoursPerDay && asset.monthlyPeakSunHoursPerDay.length > 0) {
+      entry.monthly_peak_sun_hours_per_day = [...asset.monthlyPeakSunHoursPerDay];
+    }
+    return entry;
+  });
+
+  // Annual projection time series
+  const annualProjection: GenerationExportAnnualProjectionRow[] = [];
+  for (let i = 0; i < safeHorizon; i++) {
+    const opYear = opYears[i];
+    const finYear = finYears[i];
+
+    annualProjection.push({
+      year: opYear.year,
+      solar_generation_kwh: opYear.solarGeneratedKwh,
+      solar_assets: (opYear.solarAssets || []).map((sa) => ({
+        asset_id: sa.assetId,
+        capacity_retention_factor: sa.capacityRetentionFactor,
+        effective_dc_capacity_kw: sa.effectiveDcCapacityKw,
+      })),
+      battery_capacity_retention_factor: opYear.batteryCapacityRetentionFactor,
+      battery_usable_capacity_kwh: opYear.batteryUsableCapacityKwh,
+      baseline_electricity_cost_usd: finYear.baselineElectricityCostUsd,
+      modeled_project_electricity_cost_usd: finYear.modeledProjectElectricityCostUsd,
+      electricity_savings_usd: finYear.electricitySavingsUsd,
+      generation_om_usd: finYear.generationMaintenanceUsd,
+      replacement_expense_usd: finYear.replacementExpenseUsd,
+      annual_loan_payment_usd: finYear.annualLoanPaymentUsd,
+      tax_credit_inflow_usd: finYear.taxCreditInflowUsd,
+      project_annual_cash_flow_usd: finYear.netProjectCashFlowUsd,
+      cumulative_project_cash_flow_usd: finYear.cumulativeCashFlowUsd,
+      cumulative_npv_usd: finYear.cumulativeNpvUsd,
+
+      // Additional G4B operational aggregates
+      solar_direct_to_load_kwh: opYear.solarDirectToLoadKwh,
+      solar_to_battery_kwh: opYear.solarToBatteryKwh,
+      solar_export_kwh: opYear.solarExportKwh,
+      solar_curtailed_kwh: opYear.solarCurtailedKwh,
+      grid_import_kwh: opYear.gridImportKwh,
+      grid_export_kwh: opYear.gridExportKwh,
+      battery_export_kwh: opYear.batteryExportKwh,
+      battery_discharged_kwh: opYear.batteryDischargedKwh,
+      equivalent_full_cycles: opYear.equivalentFullCycles,
+    });
+  }
+
+  const completeness = csvResult?.completeness;
+  const isFinanced = Boolean(generationAnalysis.isFinanced);
+
+  const replacementEnabled = financials.replacementEnabled ?? true;
+  const replacementCost = replacementEnabled ? (financials.replacementCost ?? 0) : null;
+  const replacementYear = replacementEnabled ? (financials.replacementYear ?? 10) : null;
+
+  return {
+    metadata: {
+      app_name: 'VoltWise',
+      app_version: APP_VERSION,
+      export_timestamp: new Date().toISOString(),
+      selected_horizon_years: safeHorizon,
+      currency: 'USD',
+      dataset_summary: {
+        start_date: completeness?.startDate || csvResult?.startDate || '',
+        end_date: completeness?.endDate || csvResult?.endDate || '',
+        total_intervals: completeness?.intervalCount || generationAwareResult.totalIntervals,
+        interval_duration_hours: completeness?.intervalDurationHours || 1,
+        duration_days: completeness?.durationDays || Math.round(generationAwareResult.totalIntervals / 24),
+        total_home_load_kwh: opDisplay.totalHomeLoadKwh,
+        is_suitable_for_annual_projection: true,
+        completeness_reason: completeness?.reason ?? null,
+      },
+    },
+    battery_configuration: {
+      profile_name: batteryProfile.name,
+      model: batteryProfile.model,
+      total_capacity_kwh: batteryProfile.totalCapacityKwh,
+      usable_dod_pct: usableDod,
+      usable_capacity_kwh: usableCapacity,
+      max_continuous_discharge_kw: batteryProfile.maxContinuousOutputKw,
+      max_continuous_charge_kw: batteryProfile.maxContinuousChargeKw,
+      round_trip_efficiency_pct: batteryProfile.roundTripEfficiencyPercent,
+      rated_cycle_life: batteryProfile.ratedCycleLife,
+      dispatch_strategy: batteryProfile.strategy,
+      charge_tiers: [...batteryProfile.chargeTiers],
+      discharge_tiers: [...batteryProfile.dischargeTiers],
+      allow_grid_export: Boolean(batteryProfile.allowGridExport),
+      battery_grid_export_permission: Boolean(batteryProfile.allowGridExport),
+      installed_cost_usd: batteryProfile.installedCost,
+    },
+    tariff_configuration: {
+      profile_name: activeTouProfile?.name || 'Standard TOU',
+      utility: activeTouProfile?.utility || 'Utility',
+      description: activeTouProfile?.description || '',
+      rate_tiers: tiers.map((t) => ({
+        id: t.id,
+        name: t.name,
+        buy_rate_usd_per_kwh: t.buyRate,
+        sell_rate_usd_per_kwh: t.sellRate,
+        color: t.color,
+      })),
+      seasons: (activeTouProfile?.seasons || []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        months: [...s.months],
+        tier_rates: { ...s.tierRates },
+      })),
+      schedule_matrix: activeTouProfile?.scheduleMatrix || [],
+    },
+    financial_assumptions: {
+      annual_electricity_inflation_rate_pct: financials.annualElectricityInflationRate,
+      annual_battery_degradation_rate_pct: financials.annualBatteryDegradationRate,
+      discount_rate_pct: financials.discountRatePercent,
+      federal_tax_credit_pct: financials.federalTaxCreditPercent,
+      federal_tax_credit_realization_year: financials.federalTaxCreditRealizationYear ?? 1,
+      local_rebate_flat_usd: financials.localRebateFlat,
+      financing: {
+        is_financed: isFinanced,
+        loan_apr_pct: financials.loanAprPercent ?? 6.99,
+        loan_term_years: financials.loanTermYears ?? 10,
+        down_payment_pct: financials.loanDownPaymentPercent ?? 0,
+        loan_principal_usd: generationAnalysis.loanPrincipalUsd,
+        monthly_loan_payment_usd: generationAnalysis.monthlyLoanPaymentUsd,
+        down_payment_usd: isFinanced ? generationAnalysis.upfrontOutOfPocketUsd : null,
+        total_loan_interest_usd: isFinanced ? generationAnalysis.totalLoanInterestUsd : null,
+      },
+      opportunity_cost: {
+        vehicle: financials.opportunityCostVehicle || generationAnalysis.opportunityCostVehicleName,
+        vehicle_name: generationAnalysis.opportunityCostVehicleName,
+        benchmark_rate_pct: generationAnalysis.opportunityCostRatePercent,
+        horizon_future_value_usd: horizonSummary.opportunityCostFutureValue,
+        horizon_opportunity_profit_usd: horizonSummary.opportunityCostProfit,
+      },
+      replacement: {
+        replacement_enabled: replacementEnabled,
+        replacement_cost_usd: replacementCost,
+        replacement_year: replacementYear,
+      },
+      resilience: {
+        critical_home_load_kw: batteryProfile.maxContinuousOutputKw,
+        annual_outage_days: financials.annualOutageDays ?? 2.5,
+        value_of_lost_load_usd_per_day: financials.valueOfLostLoadPerDay ?? 100,
+        include_voll_in_roi: financials.includeVollInRoi ?? false,
+      },
+    },
+    generation_configuration: {
+      site: {
+        latitude: generationConfig.site?.latitude ?? null,
+        longitude: generationConfig.site?.longitude ?? null,
+        time_zone: generationConfig.site?.timeZone ?? 'UTC',
+        elevation_m: generationConfig.site?.elevationM ?? null,
+      },
+      allow_solar_export: Boolean(allowSolarExport),
+      solar_export_permission: Boolean(allowSolarExport),
+      solar_arrays: solarArraysExport,
+      enabled_solar_arrays: solarArraysExport,
+    },
+    generation_year_1_results: {
+      total_home_load_kwh: opDisplay.totalHomeLoadKwh,
+      solar_generated_kwh: opDisplay.solarGeneratedKwh,
+      solar_direct_to_load_kwh: opDisplay.solarDirectToLoadKwh,
+      solar_to_battery_ac_kwh: opDisplay.solarToBatteryAcKwh,
+      solar_export_kwh: opDisplay.solarExportKwh,
+      solar_curtailed_kwh: opDisplay.solarCurtailedKwh,
+      grid_import_kwh: opDisplay.gridImportKwh,
+      grid_export_kwh: opDisplay.gridExportKwh,
+      battery_export_kwh: opDisplay.batteryExportKwh,
+      baseline_electricity_cost_usd: opDisplay.baselineCostUsd,
+      modeled_project_electricity_cost_usd: opDisplay.modeledProjectCostUsd,
+      electricity_savings_usd: opDisplay.electricitySavingsUsd,
+    },
+    generation_project_costs: {
+      battery_capex_usd: generationAnalysis.batteryCapexUsd,
+      generation_capex_usd: generationAnalysis.generationCapexUsd,
+      gross_project_capex_usd: generationAnalysis.grossProjectCapexUsd,
+      annual_generation_om_usd: generationAnalysis.annualGenerationMaintenanceUsd,
+      immediate_rebate_usd: generationAnalysis.immediateRebateUsd,
+      deferred_federal_tax_credit_usd: generationAnalysis.deferredFederalTaxCreditUsd,
+      total_incentives_usd: generationAnalysis.incentivesAmountUsd,
+      net_installed_project_cost_usd: generationAnalysis.netInstalledProjectCostUsd,
+      upfront_out_of_pocket_usd: generationAnalysis.upfrontOutOfPocketUsd,
+      is_financed: isFinanced,
+      loan_principal_usd: generationAnalysis.loanPrincipalUsd,
+      monthly_loan_payment_usd: generationAnalysis.monthlyLoanPaymentUsd,
+      total_loan_payments_usd: generationAnalysis.totalLoanPaymentsUsd,
+      total_loan_interest_usd: generationAnalysis.totalLoanInterestUsd,
+      generation_assets: (generationProjectCosts.byAsset || []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        installed_cost_usd: a.installedCostUsd,
+        annual_maintenance_cost_usd: a.annualMaintenanceCostUsd,
+      })),
+    },
+    generation_horizon_summary_kpis: {
+      horizon_years: safeHorizon,
+      horizon_net_present_value_usd: horizonSummary.netPresentValue,
+      horizon_cumulative_project_cash_flow_usd: horizonSummary.cumulativeCashFlow,
+      horizon_cumulative_electricity_savings_usd: horizonSummary.cumulativeElectricitySavings,
+      horizon_generation_maintenance_usd: horizonSummary.totalGenerationMaintenance,
+      horizon_replacement_expenses_usd: horizonSummary.totalReplacementExpense,
+      horizon_loan_payments_usd: horizonSummary.totalLoanPayments,
+      horizon_tax_credit_inflows_usd: horizonSummary.taxCreditInflows,
+      simple_payback_years: horizonSummary.simplePaybackYears,
+      discounted_payback_years: horizonSummary.discountedPaybackYears,
+      horizon_roi_pct: horizonSummary.horizonRoiPercent,
+      total_project_cash_outlays_usd: horizonSummary.totalProjectCashOutlays ?? 0,
+      opportunity_cost_future_value_usd: horizonSummary.opportunityCostFutureValue,
+      opportunity_cost_profit_usd: horizonSummary.opportunityCostProfit,
+      project_vs_opportunity_cost_usd: horizonSummary.opportunityCostDiff,
+    },
+    generation_annual_projection: annualProjection,
+  };
 }
