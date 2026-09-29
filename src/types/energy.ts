@@ -1254,3 +1254,108 @@ export interface GenerationOperationalProjection {
 
 export type GenerationOperationalProjectionResult = GenerationOperationalYear[] &
   GenerationOperationalProjection;
+
+// ============================================================================
+// Generation-Aware Project Financial Engine Contracts (Milestone G4C)
+// ============================================================================
+
+export interface GenerationProjectFinancialYear {
+  year: number;
+
+  baselineElectricityCostUsd: number;
+  modeledProjectElectricityCostUsd: number;
+  electricitySavingsUsd: number;
+
+  generationMaintenanceUsd: number;
+  replacementExpenseUsd: number;
+  annualLoanPaymentUsd: number;
+  taxCreditInflowUsd: number;
+
+  netProjectCashFlowUsd: number;
+  cumulativeCashFlowUsd: number;
+
+  discountedCashFlowUsd: number;
+  cumulativeNpvUsd: number;
+
+  opportunityCostValueUsd: number;
+
+  // Preserved asset health & physical metrics from G4B
+  batteryCapacityRetentionFactor?: number;
+  batteryUsableCapacityKwh?: number;
+  equivalentFullCycles?: number;
+  solarGeneratedKwh?: number;
+}
+
+export interface GenerationFinancialAnalysis {
+  batteryProfile: BatteryProfile;
+  operationalProjection: GenerationOperationalProjection;
+  projectCosts: GenerationProjectCostSummary;
+
+  horizonYears: number;
+
+  batteryCapexUsd: number;
+  generationCapexUsd: number;
+  grossProjectCapexUsd: number;
+
+  immediateRebateUsd: number;
+  deferredFederalTaxCreditUsd: number;
+  incentivesAmountUsd: number;
+  netInstalledProjectCostUsd: number;
+
+  upfrontOutOfPocketUsd: number;
+
+  isFinanced: boolean;
+  loanPrincipalUsd: number;
+  monthlyLoanPaymentUsd: number;
+  totalLoanPaymentsUsd: number;
+  totalLoanInterestUsd: number;
+
+  annualGenerationMaintenanceUsd: number;
+
+  year1ElectricitySavingsUsd: number;
+  year1NetProjectCashFlowUsd: number;
+
+  paybackYears: number | null;
+  paybackFormatted: string;
+
+  npvUsd: number;
+  irrPercent: number | null;
+  lifetimeNetProfitUsd: number;
+  lifetimeRoiPercent: number;
+
+  totalProjectCashOutlaysUsd: number;
+
+  opportunityCostVehicleName: string;
+  opportunityCostRatePercent: number;
+  opportunityCostFutureValueUsd: number;
+  opportunityCostProfitUsd: number;
+  opportunityCostDiffUsd: number;
+  projectOutperformsAlternative: boolean;
+
+  projections: GenerationProjectFinancialYear[];
+
+  // Resilience / VOLL companion metrics
+  annualResilienceValueUsd?: number;
+  lifetimeResilienceValueUsd?: number;
+  npvWithVollUsd?: number;
+  lifetimeNetProfitWithVollUsd?: number;
+  lifetimeRoiWithVollPercent?: number;
+}
+
+export interface GenerationHorizonFinancialSummary {
+  horizonYears: number;
+  cumulativeCashFlow: number;
+  netPresentValue: number;
+  cumulativeElectricitySavings: number;
+  totalGenerationMaintenance: number;
+  totalReplacementExpense: number;
+  totalLoanPayments: number;
+  taxCreditInflows: number;
+  simplePaybackYears: number | null;
+  discountedPaybackYears: number | null;
+  horizonRoiPercent: number;
+  totalProjectCashOutlays?: number;
+  opportunityCostFutureValue: number;
+  opportunityCostProfit: number;
+  opportunityCostDiff: number;
+}

@@ -310,4 +310,67 @@ describe('Opportunity Cost Methodology & Counterfactual Benchmark', () => {
     expect(analysisA.lifetimeNetProfit).not.toBe(analysisB.lifetimeNetProfit);
     expect(analysisB.lifetimeNetProfit).toBeGreaterThan(analysisA.lifetimeNetProfit);
   });
+
+  it('Test 10 — Additional annual contributions (generation O&M) are added at year end after growth', () => {
+    // Upfront: $1,000, 10% rate, 2 years, no loan, no replacement, $200/yr additional outlays
+    // Year 1: $1,000 * 1.10 = $1,100 + $200 = $1,300. Contributions = $1,000 + $200 = $1,200. Profit = $100.
+    // Year 2: $1,300 * 1.10 = $1,430 + $200 = $1,630. Contributions = $1,200 + $200 = $1,400. Profit = $230.
+    const input: OpportunityCostBenchmarkInput = {
+      horizonYears: 2,
+      annualRatePercent: 10,
+      upfrontContribution: 1000,
+      monthlyLoanPayment: 0,
+      loanTermYears: 0,
+      replacementEnabled: false,
+      replacementCost: 0,
+      replacementYear: 0,
+      additionalAnnualContributions: [200, 200],
+    };
+
+    const result = calculateOpportunityCostBenchmark(input);
+
+    expect(result.yearly).toHaveLength(2);
+    expect(result.yearly[0].futureValue).toBeCloseTo(1300, 2);
+    expect(result.yearly[0].cumulativeContributions).toBeCloseTo(1200, 2);
+    expect(result.yearly[0].profit).toBeCloseTo(100, 2);
+
+    expect(result.yearly[1].futureValue).toBeCloseTo(1630, 2);
+    expect(result.yearly[1].cumulativeContributions).toBeCloseTo(1400, 2);
+    expect(result.yearly[1].profit).toBeCloseTo(230, 2);
+
+    expect(result.totalContributions).toBeCloseTo(1400, 2);
+    expect(result.futureValue).toBeCloseTo(1630, 2);
+    expect(result.profit).toBeCloseTo(230, 2);
+  });
+
+  it('Test 11 — Backward compatibility: omitting additionalAnnualContributions produces identical results', () => {
+    const baseInput: OpportunityCostBenchmarkInput = {
+      horizonYears: 5,
+      annualRatePercent: 6,
+      upfrontContribution: 5000,
+      monthlyLoanPayment: 150,
+      loanTermYears: 3,
+      replacementEnabled: true,
+      replacementCost: 1500,
+      replacementYear: 4,
+    };
+
+    const resultWithout = calculateOpportunityCostBenchmark(baseInput);
+    const resultWithUndefined = calculateOpportunityCostBenchmark({
+      ...baseInput,
+      additionalAnnualContributions: undefined,
+    });
+    const resultWithEmpty = calculateOpportunityCostBenchmark({
+      ...baseInput,
+      additionalAnnualContributions: [],
+    });
+
+    expect(resultWithout.futureValue).toBe(resultWithUndefined.futureValue);
+    expect(resultWithout.totalContributions).toBe(resultWithUndefined.totalContributions);
+    expect(resultWithout.profit).toBe(resultWithUndefined.profit);
+
+    expect(resultWithout.futureValue).toBe(resultWithEmpty.futureValue);
+    expect(resultWithout.totalContributions).toBe(resultWithEmpty.totalContributions);
+    expect(resultWithout.profit).toBe(resultWithEmpty.profit);
+  });
 });

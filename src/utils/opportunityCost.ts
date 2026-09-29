@@ -34,6 +34,8 @@ export interface OpportunityCostBenchmarkInput {
   replacementEnabled: boolean;
   replacementCost: number;
   replacementYear: number;
+
+  additionalAnnualContributions?: number[];
 }
 
 export interface OpportunityCostYear {
@@ -74,6 +76,7 @@ export function calculateOpportunityCostBenchmark(
     replacementEnabled,
     replacementCost,
     replacementYear,
+    additionalAnnualContributions,
   } = input;
 
   const safeHorizon = Math.max(0, Math.round(horizonYears || 0));
@@ -94,7 +97,7 @@ export function calculateOpportunityCostBenchmark(
     // 1. Grow existing balance by the annual benchmark rate
     balance *= (1 + rate);
 
-    // 2. Determine battery cash outlays occurring in that year
+    // 2. Determine battery / project cash outlays occurring in that year
     let annualContribution = 0;
 
     if (year <= safeLoanTermYears) {
@@ -103,6 +106,13 @@ export function calculateOpportunityCostBenchmark(
 
     if (replacementEnabled && year === safeReplacementYear) {
       annualContribution += safeReplacementCost;
+    }
+
+    if (additionalAnnualContributions && additionalAnnualContributions.length >= year) {
+      const extra = additionalAnnualContributions[year - 1];
+      if (typeof extra === 'number' && !isNaN(extra)) {
+        annualContribution += Math.max(0, extra);
+      }
     }
 
     // 3. Add outlays to the alternative investment at the end of the year
